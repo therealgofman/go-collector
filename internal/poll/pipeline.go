@@ -82,6 +82,12 @@ func runOne(sw map[string]any, kind string, opt Options) snmp.PollResult {
 			out.Error = err.Error()
 		} else {
 			out.ArpTable = v
+			type arpNoopDetector interface {
+				IsArpNoop() bool
+			}
+			if detector, ok := model.(arpNoopDetector); ok {
+				out.ArpSkipped = detector.IsArpNoop()
+			}
 		}
 	case "mac":
 		var ctx *snmp.MacDbContext

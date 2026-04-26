@@ -18,6 +18,15 @@ func (m *Device) CollectARP() (map[string]map[string]string, error) {
 	return m.arpCollect.CollectARP(m.client)
 }
 
+// IsArpNoop возвращает true, когда для модели используется no-op ARP коллектор.
+func (m *Device) IsArpNoop() bool {
+	type arpNoop interface {
+		IsNoop() bool
+	}
+	v, ok := m.arpCollect.(arpNoop)
+	return ok && v.IsNoop()
+}
+
 func (m *Device) CollectMAC(ctx *snmp.MacDbContext) (map[string]any, error) {
 	return m.macCollect.CollectMAC(m.client, ctx)
 }

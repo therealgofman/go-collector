@@ -18,6 +18,7 @@ type PollResult struct {
 	SysObjectID string
 	RawSwitch   map[string]any
 	Interfaces  map[string]any
+	ArpSkipped  bool
 	ArpTable    map[string]map[string]string
 	MacTable    map[string]any
 }

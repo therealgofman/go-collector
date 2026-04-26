@@ -142,7 +142,11 @@ func PrintArpPollSummary(results []snmp.PollResult) {
 			continue
 		}
 		if len(r.ArpTable) == 0 {
-			fmt.Printf("\n[%s] ARP @ %s: (empty)\n", label, r.IP)
+			if r.ArpSkipped {
+				fmt.Printf("\n[%s] ARP @ %s: (skip by strategy)\n", label, r.IP)
+			} else {
+				fmt.Printf("\n[%s] ARP @ %s: (empty)\n", label, r.IP)
+			}
 			continue
 		}
 		total := 0
