@@ -1,0 +1,22 @@
+# Build artifacts
+/bin/
+*.exe
+*.out
+
+# Local tool caches
+/.cache/
+
+# Go workspace leftovers
+coverage.out
+*.test
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local runtime/debug files
+debug_snmp.txt
+*.log
+*.tmp

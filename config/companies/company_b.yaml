@@ -1,0 +1,296 @@
+# companies/company_b.yaml — пример компании (упрощённые имена таблиц)
+company:
+  name: "Компания B"
+  db_template: "mysql_default"
+  # Имена из раздела queries — какие SQL-шаблоны не вызывать при сохранении интерфейсов (persist).
+  # При необходимости сюда можно добавить update_port, insert_port и т.п.
+  persist_disabled_queries:
+    - update_switch_sysname_snmp
+
+database:
+  host: "localhost"
+  port: 3306
+  name: "db_name"
+  user: "username"
+  password: "password"
+
+schema:
+  switch_table: "switch"
+  model_table: "model"
+  vlan_table: "vlan"
+  ip_arp_table: "ip_arp"
+  vrf_table: "vrf"
+  port_table: "port"
+  port2vlan_table: "port2vlan"
+  mac_table: "mac"
+
+  field_mapping:
+    switch:
+      id: "switch_id"
+      ip: "ip"
+      domain_id: "domain_id"
+      community: "comm"
+      sysname_snmp: "sysname_snmp"
+      do_arp: "do_arp"
+      host_name: "host_name"
+      model_id: "model_id"
+    model:
+      id: "model_id"
+      cap_arp: "cap_arp"
+
+    vlan:
+      id: "vlan_id"
+      number: "number"
+      domain_id: "domain_id"
+
+    port:
+      id: "port_id"
+      switch_id: "switch_id"
+      name: "name"
+      trunk: "trunk"
+      description: "description"
+      disabled: "disabled"
+      ifindex: "ifindex"
+      last_upd: "last_upd"
+      role: "role"
+
+    port2vlan:
+      port_id: "port_id"
+      vlan_id: "vlan_id"
+
+    ip_arp:
+      vrf_id: "vrf_id"
+      addr: "addr"
+      mac: "mac"
+      vlan_id: "vlan_id"
+      switch_id: "switch_id"
+      dt: "dt"
+
+    vrf:
+      id: "id"
+      name: "name"
+
+    mac_fwd:
+      port_id: "port_id"
+      vlan_id: "vlan_id"
+      mac: "mac"
+      type: "type"
+      present: "present"
+      first_tm: "first_tm"
+      last_tm: "last_tm"
+
+queries:
+  get_ping:
+    template: |
+      SELECT 1
+
+  update_switch_sysname_snmp:
+    template: |
+      UPDATE {{ schema.switch_table }}
+      SET {{ field_mapping.switch.sysname_snmp }} = :sysname_snmp
+      WHERE {{ field_mapping.switch.id }} = :switch_id
+
+  get_vlans:
+    template: |
+      SELECT
+        {{ field_mapping.vlan.id | quote }},
+        {{ field_mapping.vlan.number | quote }},
+        {{ field_mapping.vlan.domain_id | quote }}
+      FROM {{ schema.vlan_table }}
+      WHERE 1
+
+  get_vrf_map:
+    template: |
+      SELECT
+        {{ field_mapping.vrf.id | quote }} AS id,
+        {{ field_mapping.vrf.name | quote }} AS name
+      FROM {{ schema.vrf_table }}
+
+  get_switches_for_poll:
+    template: |
+      SELECT
+        s.{{ field_mapping.switch.id | quote }},
+        INET_NTOA(s.{{ field_mapping.switch.ip | quote }}) AS {{ field_mapping.switch.ip | quote }},
+        s.{{ field_mapping.switch.domain_id | quote }},
+        s.{{ field_mapping.switch.community | quote }}
+      FROM {{ schema.switch_table }} s
+      WHERE
+      {% if switch_id %}
+      s.{{ field_mapping.switch.id | quote }} = :switch_id
+      {% else %}
+      1 = 1
+      {% endif %}
+      ORDER BY s.{{ field_mapping.switch.id | quote }} DESC
+
+  get_switches_for_poll_arp:
+    template: |
+      SELECT
+        s.{{ field_mapping.switch.id | quote }} AS switch_id,
+        INET_NTOA(s.{{ field_mapping.switch.ip | quote }}) AS ip,
+        IF(s.{{ field_mapping.switch.community | quote }} <> '', s.{{ field_mapping.switch.community | quote }}, 'vista') AS comm,
+        s.{{ field_mapping.switch.model_id | quote }} AS model_id,
+        s.{{ field_mapping.switch.domain_id | quote }} AS domain_id,
+        s.{{ field_mapping.switch.host_name | quote }} AS host_name
+      FROM {{ schema.switch_table }} s
+      INNER JOIN {{ schema.model_table }} m
+        ON s.{{ field_mapping.switch.model_id | quote }} = m.{{ field_mapping.model.id | quote }}
+      {% if switch_id %}
+      WHERE s.{{ field_mapping.switch.id | quote }} = :switch_id
+      {% else %}
+      WHERE s.{{ field_mapping.switch.do_arp | quote }} = 1
+      AND m.{{ field_mapping.model.cap_arp | quote }} = 1
+      {% endif %}
+      ORDER BY s.{{ field_mapping.switch.id | quote }} DESC
+
+  update_arp_table:
+    template: |
+      INSERT INTO {{ schema.ip_arp_table }} (
+        {{ field_mapping.ip_arp.vrf_id | quote }},
+        {{ field_mapping.ip_arp.addr | quote }},
+        {{ field_mapping.ip_arp.mac | quote }},
+        {{ field_mapping.ip_arp.vlan_id | quote }},
+        {{ field_mapping.ip_arp.switch_id | quote }},
+        {{ field_mapping.ip_arp.dt | quote }}
+      ) VALUES (
+        :vrf_id,
+        INET_ATON(:ip),
+        :mac,
+        :vlan_id,
+        :switch_id,
+        UNIX_TIMESTAMP()
+      )
+      ON DUPLICATE KEY UPDATE
+        {{ field_mapping.ip_arp.mac | quote }} = VALUES({{ field_mapping.ip_arp.mac | quote }}),
+        {{ field_mapping.ip_arp.vlan_id | quote }} = VALUES({{ field_mapping.ip_arp.vlan_id | quote }}),
+        {{ field_mapping.ip_arp.switch_id | quote }} = VALUES({{ field_mapping.ip_arp.switch_id | quote }}),
+        {{ field_mapping.ip_arp.dt | quote }} = VALUES({{ field_mapping.ip_arp.dt | quote }})
+
+  get_port_by_ifindex:
+    template: |
+      SELECT {{ field_mapping.port.id | quote }} FROM {{ schema.port_table }}
+      WHERE {{ field_mapping.port.switch_id | quote }} = :switch_id
+        AND {{ field_mapping.port.ifindex | quote }} = :ifindex
+      ORDER BY {{ field_mapping.port.id | quote }} LIMIT 1
+
+  get_port_by_name:
+    template: |
+      SELECT {{ field_mapping.port.id | quote }} FROM {{ schema.port_table }}
+      WHERE {{ field_mapping.port.switch_id | quote }} = :switch_id
+        AND {{ field_mapping.port.name | quote }} = :name
+      ORDER BY {{ field_mapping.port.id | quote }} LIMIT 1
+
+  update_port:
+    template: |
+      UPDATE {{ schema.port_table }}
+      SET
+        {{ field_mapping.port.name | quote }} = :name,
+        {{ field_mapping.port.trunk | quote }} = :trunk,
+        {{ field_mapping.port.description | quote }} = :description,
+        {{ field_mapping.port.disabled | quote }} = :disabled,
+        {{ field_mapping.port.ifindex | quote }} = :ifindex,
+        {{ field_mapping.port.last_upd | quote }} = UNIX_TIMESTAMP()
+      WHERE {{ field_mapping.port.id | quote }} = :port_id
+
+  insert_port:
+    template: |
+      INSERT INTO {{ schema.port_table }} (
+        {{ field_mapping.port.switch_id | quote }},
+        {{ field_mapping.port.trunk | quote }},
+        {{ field_mapping.port.name | quote }},
+        {{ field_mapping.port.description | quote }},
+        {{ field_mapping.port.ifindex | quote }},
+        {{ field_mapping.port.last_upd | quote }},
+        {{ field_mapping.port.role | quote }}
+      ) VALUES (
+        :switch_id, :trunk, :name, :description, :ifindex, UNIX_TIMESTAMP(), :role
+      )
+
+  insert_port2vlan:
+    template: |
+      INSERT INTO {{ schema.port2vlan_table }} (
+        {{ field_mapping.port2vlan.port_id | quote }},
+        {{ field_mapping.port2vlan.vlan_id | quote }}
+      ) VALUES (:port_id, :vlan_id)
+
+  delete_port2vlan_by_port:
+    template: |
+      DELETE FROM {{ schema.port2vlan_table }}
+      WHERE {{ field_mapping.port2vlan.port_id | quote }} = :port_id
+
+  get_ifindex_to_port_id:
+    template: |
+      SELECT
+        p.{{ field_mapping.port.ifindex | quote }} AS ifindex,
+        p.{{ field_mapping.port.id | quote }} AS port_id
+      FROM {{ schema.port_table }} p
+      WHERE p.{{ field_mapping.port.switch_id | quote }} = :switch_id
+        AND p.{{ field_mapping.port.ifindex | quote }} != 0
+
+  get_ifindex_untagged_vlan:
+    template: |
+      SELECT
+        p.{{ field_mapping.port.ifindex | quote }} AS ifindex,
+        v.{{ field_mapping.vlan.number | quote }} AS number
+      FROM {{ schema.switch_table }} s
+      INNER JOIN {{ schema.port_table }} p
+        ON s.{{ field_mapping.switch.id | quote }} = p.{{ field_mapping.port.switch_id | quote }}
+      INNER JOIN {{ schema.port2vlan_table }} pv
+        ON p.{{ field_mapping.port.id | quote }} = pv.{{ field_mapping.port2vlan.port_id | quote }}
+      INNER JOIN {{ schema.vlan_table }} v
+        ON pv.{{ field_mapping.port2vlan.vlan_id | quote }} = v.{{ field_mapping.vlan.id | quote }}
+      WHERE s.{{ field_mapping.switch.id | quote }} = :switch_id
+        AND p.{{ field_mapping.port.ifindex | quote }} != 0
+        AND p.{{ field_mapping.port.trunk | quote }} = 0
+
+  get_vlan_list_for_mac_idxcom:
+    template: |
+      SELECT
+        v.{{ field_mapping.vlan.number | quote }} AS number,
+        v.{{ field_mapping.vlan.id | quote }} AS vlan_id
+      FROM {{ schema.port_table }} p
+      INNER JOIN {{ schema.port2vlan_table }} pv
+        ON p.{{ field_mapping.port.id | quote }} = pv.{{ field_mapping.port2vlan.port_id | quote }}
+      INNER JOIN {{ schema.vlan_table }} v
+        ON pv.{{ field_mapping.port2vlan.vlan_id | quote }} = v.{{ field_mapping.vlan.id | quote }}
+      WHERE p.{{ field_mapping.port.switch_id | quote }} = :switch_id
+      GROUP BY v.{{ field_mapping.vlan.id | quote }}
+      ORDER BY v.{{ field_mapping.vlan.number | quote }} DESC
+
+  get_snmp_timestamp_boundary:
+    template: |
+      SELECT UNIX_TIMESTAMP() - 1 AS ts
+
+  upsert_mac_forward:
+    template: |
+      INSERT INTO {{ schema.mac_table }} (
+        {{ field_mapping.mac_fwd.port_id | quote }},
+        {{ field_mapping.mac_fwd.vlan_id | quote }},
+        {{ field_mapping.mac_fwd.mac | quote }},
+        {{ field_mapping.mac_fwd.type | quote }},
+        {{ field_mapping.mac_fwd.present | quote }},
+        {{ field_mapping.mac_fwd.first_tm | quote }},
+        {{ field_mapping.mac_fwd.last_tm | quote }}
+      ) VALUES (
+        :port_id, :vlan_id, :mac, :sta, 1, UNIX_TIMESTAMP(), UNIX_TIMESTAMP()
+      )
+      ON DUPLICATE KEY UPDATE
+        {{ field_mapping.mac_fwd.present | quote }} = 1,
+        {{ field_mapping.mac_fwd.type | quote }} = VALUES({{ field_mapping.mac_fwd.type | quote }}),
+        {{ field_mapping.mac_fwd.last_tm | quote }} = UNIX_TIMESTAMP()
+
+  mark_mac_obsolete_global:
+    template: |
+      UPDATE {{ schema.mac_table }}
+      SET {{ field_mapping.mac_fwd.present | quote }} = 0
+      WHERE {{ field_mapping.mac_fwd.present | quote }} = 1
+        AND {{ field_mapping.mac_fwd.last_tm | quote }} < :boundary_before
+        AND {{ field_mapping.mac_fwd.port_id | quote }} IN ({{ port_ids_in }})
+
+  mark_mac_obsolete_by_vlan:
+    template: |
+      UPDATE {{ schema.mac_table }}
+      SET {{ field_mapping.mac_fwd.present | quote }} = 0
+      WHERE {{ field_mapping.mac_fwd.present | quote }} = 1
+        AND {{ field_mapping.mac_fwd.last_tm | quote }} < :boundary_before
+        AND {{ field_mapping.mac_fwd.port_id | quote }} IN ({{ port_ids_in }})
+        AND {{ field_mapping.mac_fwd.vlan_id | quote }} = :vlan_id
