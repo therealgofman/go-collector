@@ -14,6 +14,12 @@ import (
 	"github.com/gosnmp/gosnmp"
 )
 
+type snmpTransport interface {
+	Walk(c *Client, baseOID string, community string) (map[string]string, error)
+	WalkManyOIDs(c *Client, oids []string, community string, useBulkWalk *bool) (map[string]map[string]string, error)
+	WalkWithOptions(c *Client, baseOID string, community string, useBulkWalk *bool) (map[string]string, error)
+}
+
 // oidARPPhysAddress — ipNetToMediaPhysAddress (.1.3.6.1.2.1.4.22.1.2). Значение — OCTET STRING;
 // snmpwalk может показывать его как Hex-STRING или как STRING с «печатными» байтами — это одно и то же.
 const oidARPPhysAddress = "1.3.6.1.2.1.4.22.1.2"
@@ -41,6 +47,7 @@ type Client struct {
 	// Debug: подробный вывод gosnmp (поле Logger в GoSNMP), флаг CLI -debug-snmp.
 	Debug     bool
 	OIDTiming bool // логировать длительность каждого walk (флаг CLI -snmp-oid-timing)
+	transport snmpTransport
 }
 
 // NewClient нормализует IP/community (убирает нулевые байты), задаёт минимальный таймаут 5 с.
@@ -114,12 +121,20 @@ func pduToString(v gosnmp.SnmpPDU, baseOID string) string {
 
 // Walk выполняет один обход дерева под baseOID с политикой GETNEXT.
 func (c *Client) Walk(baseOID string, community string) (map[string]string, error) {
+	return c.WalkWithOptions(baseOID, community, nil)
+}
+
+// WalkWithOptions выполняет один обход дерева под baseOID с режимом GETNEXT/GETBULK.
+func (c *Client) WalkWithOptions(baseOID string, community string, useBulkWalk *bool) (map[string]string, error) {
+	if c.transport != nil {
+		return c.transport.WalkWithOptions(c, baseOID, community, useBulkWalk)
+	}
 	g, err := c.connect(community)
 	if err != nil {
 		return nil, fmt.Errorf("snmp connect ip=%s: %w", c.IP, err)
 	}
 	defer g.Conn.Close()
-	return c.walkWithConn(g, baseOID, nil)
+	return c.walkWithConn(g, baseOID, useBulkWalk)
 }
 
 // walkWithConn — обход поддерева baseOID: Walk (GETNEXT) или BulkWalk (GETBULK). useBulkWalk: nil/false* → GETNEXT, true* → GETBULK.
@@ -165,6 +180,9 @@ func (c *Client) WalkMany(oids []string, community string) (map[string]map[strin
 // WalkManyOIDs обходит несколько базовых OID на одном соединении.
 // useBulkWalk: nil или указатель на false — для каждого OID используется Walk (GETNEXT); true — BulkWalk (GETBULK) с Client.GetBulkMaxRepetitions.
 func (c *Client) WalkManyOIDs(oids []string, community string, useBulkWalk *bool) (map[string]map[string]string, error) {
+	if c.transport != nil {
+		return c.transport.WalkManyOIDs(c, oids, community, useBulkWalk)
+	}
 	g, err := c.connect(community)
 	if err != nil {
 		return nil, fmt.Errorf("snmp connect ip=%s: %w", c.IP, err)

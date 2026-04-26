@@ -8,10 +8,13 @@ GOLANGCI_LINT_CACHE := $(CURDIR)/.cache/golangci-lint
 BINARY_NAME ?= go-collector
 BUILD_DIR ?= bin
 
-.PHONY: fmt lint lint-fix build check
+.PHONY: fmt test lint lint-fix build check
 
 fmt:
 	$(GO) fmt $(PKGS)
+
+test:
+	GOPATH=$(GOPATH) GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GO) test $(PKGS)
 
 lint:
 	GOPATH=$(GOPATH) GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) GOLANGCI_LINT_CACHE=$(GOLANGCI_LINT_CACHE) $(GOLANGCI_LINT_RUN) run
@@ -23,4 +26,4 @@ build:
 	mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(BUILD_DIR)/$(BINARY_NAME) .
 
-check: fmt lint build
+check: fmt test lint build

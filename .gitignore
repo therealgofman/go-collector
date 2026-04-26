@@ -5,6 +5,9 @@
 
 # Local tool caches
 /.cache/
+.gocache/
+.gomodcache/
+.gopath/
 
 # Go workspace leftovers
 coverage.out
