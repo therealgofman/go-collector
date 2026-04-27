@@ -7,10 +7,10 @@ import (
 
 func TestCiscoIfaceL2CollectInterfaces(t *testing.T) {
 	client := newClientWithStubbedTransportAndWalk(t, map[string]map[string]string{
-		ciscoL2InterfaceOIDs["ifAdminStatus"]: {"10": "1", "20": "2"},
-		ciscoL2InterfaceOIDs["ifName"]:        {"10": "GigabitEthernet0/1", "20": "GigabitEthernet0/2"},
-		ciscoL2InterfaceOIDs["ifAlias"]:       {"10": "p1", "20": "p2"},
-		ciscoL2InterfaceOIDs["ifType"]:        {"10": "6", "20": "6"},
+		ciscoL2InterfaceOIDs["ifAdminStatus"]:   {"10": "1", "20": "2"},
+		ciscoL2InterfaceOIDs["ifName"]:          {"10": "GigabitEthernet0/1", "20": "GigabitEthernet0/2"},
+		ciscoL2InterfaceOIDs["ifAlias"]:         {"10": "p1", "20": "p2"},
+		ciscoL2InterfaceOIDs["ifType"]:          {"10": "6", "20": "6"},
 		ciscoL2InterfaceOIDs["ifXconnectPorts"]: {},
 		ciscoL2InterfaceOIDs["untaggedPorts"]:   {"100": "\x80"},
 		ciscoL2InterfaceOIDs["encapsulation"]:   {"20": "4"},
@@ -72,14 +72,14 @@ func TestHPEIfaceQBridgeStaticCollectInterfaces(t *testing.T) {
 
 func TestExtremeIfaceCollectInterfaces(t *testing.T) {
 	client := newClientWithStubbedTransport(t, map[string]map[string]string{
-		"1.3.6.1.2.1.2.2.1.7":          {"10": "1"},
-		"1.3.6.1.2.1.31.1.1.1.18":      {"10": "ext"},
-		"1.3.6.1.2.1.2.2.1.3":          {"10": "6"},
-		"1.3.6.1.2.1.31.1.1.1.1":       {"10": "xe-1"},
+		"1.3.6.1.2.1.2.2.1.7":           {"10": "1"},
+		"1.3.6.1.2.1.31.1.1.1.18":       {"10": "ext"},
+		"1.3.6.1.2.1.2.2.1.3":           {"10": "6"},
+		"1.3.6.1.2.1.31.1.1.1.1":        {"10": "xe-1"},
 		"1.3.6.1.4.1.1916.1.2.1.2.1.10": {"1": "200"},
-		"1.3.6.1.4.1.1916.1.2.6.1.1.1": {"1.1": "\x80"},
-		"1.3.6.1.4.1.1916.1.2.6.1.1.2": {"1.1": "\x00"},
-		"1.3.6.1.2.1.17.1.4.1.2":       {"1": "10"},
+		"1.3.6.1.4.1.1916.1.2.6.1.1.1":  {"1.1": "\x80"},
+		"1.3.6.1.4.1.1916.1.2.6.1.1.2":  {"1.1": "\x00"},
+		"1.3.6.1.2.1.17.1.4.1.2":        {"1": "10"},
 	})
 	got, err := (&extremeIface{typ: 3}).CollectInterfaces(client)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestExtremeIfaceCollectInterfaces(t *testing.T) {
 func TestDLinkCollectorsCollectInterfaces(t *testing.T) {
 	t.Run("1210", func(t *testing.T) {
 		client := newClientWithStubbedTransport(t, map[string]map[string]string{
-			"1.3.6.1.2.1.2.2.1.3":          {"1": "6"},
+			"1.3.6.1.2.1.2.2.1.3":              {"1": "6"},
 			"1.3.6.1.4.1.171.10.75.5.1.14.1.3": {"1.100": "Port1"},
 			"1.3.6.1.4.1.171.10.75.5.7.6.1.5":  {"100": "1"},
 			"1.3.6.1.4.1.171.10.75.5.7.6.1.2":  {"100": "\x80"},
@@ -221,9 +221,9 @@ func TestHuaweiQBridgeAndJuniperIfaceCollectors(t *testing.T) {
 func TestCollectorsARPImplementations(t *testing.T) {
 	t.Run("qbridgeMainARP", func(t *testing.T) {
 		client := newClientWithStubbedTransportAndWalk(t, nil, map[string]map[string]string{
-			walkKey("1.3.6.1.2.1.31.1.1.1.1", ""):    {"10": "Vlan100"},
+			walkKey("1.3.6.1.2.1.31.1.1.1.1", ""):     {"10": "Vlan100"},
 			walkKey("1.3.6.1.2.1.17.7.1.4.3.1.1", ""): {"100": "Vlan100"},
-			walkKey("1.3.6.1.2.1.4.22.1.2", ""):      {"10.192.0.2.1": "aa:bb:cc:dd:ee:ff"},
+			walkKey("1.3.6.1.2.1.4.22.1.2", ""):       {"10.192.0.2.1": "aa:bb:cc:dd:ee:ff"},
 		})
 		got, err := (&qbridgeMainARP{}).CollectARP(client)
 		if err != nil {
@@ -252,7 +252,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 	t.Run("extremeARP", func(t *testing.T) {
 		client := newClientWithStubbedTransportAndWalk(t, nil, map[string]map[string]string{
 			walkKey("1.3.6.1.4.1.1916.1.2.1.2.1.10", ""): {"100.10": "10"},
-			walkKey("1.3.6.1.2.1.4.22.1.2", ""):         {"10.192.0.2.3": "bb:bb:bb:bb:bb:bb"},
+			walkKey("1.3.6.1.2.1.4.22.1.2", ""):          {"10.192.0.2.3": "bb:bb:bb:bb:bb:bb"},
 		})
 		got, err := (&extremeARP{}).CollectARP(client)
 		if err != nil {
@@ -281,7 +281,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 
 	t.Run("ciscoARPVlanIf", func(t *testing.T) {
 		client := newClientWithStubbedTransportAndWalk(t, nil, map[string]map[string]string{
-			walkKey("1.3.6.1.2.1.2.2.1.2", ""): {"10": "Vlan100"},
+			walkKey("1.3.6.1.2.1.2.2.1.2", ""):  {"10": "Vlan100"},
 			walkKey("1.3.6.1.2.1.4.22.1.2", ""): {"10.192.0.2.5": "cc:cc:cc:cc:cc:cc"},
 		})
 		got, err := (&ciscoARPVlanIf{}).CollectARP(client)
@@ -296,8 +296,8 @@ func TestCollectorsARPImplementations(t *testing.T) {
 	t.Run("ciscoARPL3Router", func(t *testing.T) {
 		client := newClientWithStubbedTransportAndWalk(t, nil, map[string]map[string]string{
 			walkKey("1.3.6.1.4.1.9.9.128.1.1.1.1.3", ""): {"100.10": "1"},
-			walkKey("1.3.6.1.2.1.4.22.1.2", ""):         {"10.192.0.2.6": "dd:dd:dd:dd:dd:dd"},
-			walkKey("1.3.6.1.3.118.1.2.1.1.6", ""):      {"114.101.100.10": "1"},
+			walkKey("1.3.6.1.2.1.4.22.1.2", ""):          {"10.192.0.2.6": "dd:dd:dd:dd:dd:dd"},
+			walkKey("1.3.6.1.3.118.1.2.1.1.6", ""):       {"114.101.100.10": "1"},
 		})
 		got, err := (&ciscoARPL3Router{}).CollectARP(client)
 		if err != nil {

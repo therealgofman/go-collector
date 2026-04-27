@@ -6,7 +6,11 @@
 
 - `internal/snmp` — получение и нормализация данных с устройств (vendor-specific collectors).
 - `internal/snmp/models` — выбор модели устройства и сборка pipeline (factory + hooks).
-- `internal/db` — репозитории и persist-слой для записи в БД.
+- `internal/db`:
+  - `connection.go` — инфраструктура подключения и ping БД,
+  - `repository.go` — типизированный слой запросов,
+  - `templated_store.go` — адаптер typed bind -> YAML SQL templates,
+  - `persist` — orchestration сохранения результатов poll.
 - `config/companies/*.yaml` — SQL-шаблоны и feature-флаги на уровне компании.
 
 ## 2) Поток данных (high-level)
@@ -41,7 +45,7 @@
 
 ## 5) Persist и SQL-конфигурация
 
-Persist-слой универсален и не "знает" про конкретные фичи вендора. Он исполняет именованные запросы из `company.yaml`.
+Persist-слой универсален и не "знает" про конкретные фичи вендора. Он исполняет именованные запросы из `config/companies/<company>.yaml`.
 
 Практически это дает:
 
@@ -83,3 +87,4 @@ Persist-слой универсален и не "знает" про конкре
 
 - Поток enrich/persist: `docs/interface-enrichment-flow.md`
 - YAML, шаблоны, named queries: `docs/yaml-templates-and-queries.md`
+- Как добавлять новый гибкий query: `docs/adding-flexible-queries.md`

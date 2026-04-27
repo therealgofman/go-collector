@@ -38,7 +38,7 @@ func logWarnings(prefix string, warns []string) {
 	}
 }
 
-// main загружает YAML, открывает БД, при необходимости строит MacDbContext по каждому свитчу,
+// main загружает YAML, открывает БД, собирает репозиторий через DI, при необходимости строит MacDbContext по каждому свитчу,
 // запускает poll.RunBatch для выбранных видов опроса и вызывает persist
 func main() {
 	var collectInterfaces, collectARP, collectMAC, debugSNMP, dryRun bool
@@ -74,11 +74,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	repo, err := db.NewRepository(companyCfg, appCfg)
+	sqlDB, err := db.OpenMySQLDB(companyCfg, appCfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer repo.Close()
+	if err := db.PingMySQLDB(sqlDB); err != nil {
+		log.Fatal(err)
+	}
+	defer sqlDB.Close()
+	repo, err := db.NewRepository(db.Deps{
+		DB:      sqlDB,
+		Company: companyCfg,
+		App:     appCfg,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	persistSvc := persist.New(repo)
 	fmt.Printf("Запуск %s v%s\n", appCfg.App.Name, appCfg.App.Version)
 	fmt.Printf("Компания: %s\n", companyCfg.Company.Name)

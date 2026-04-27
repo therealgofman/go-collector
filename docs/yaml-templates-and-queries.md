@@ -19,6 +19,11 @@
 
 В коде не хардкодятся конкретные SQL-строки. Вместо этого вызывается query по имени, а SQL рендерится из YAML.
 
+В текущей реализации:
+
+- `Repository` остаётся типизированным слоем;
+- `templated_store` инкапсулирует динамику шаблонов (`bind/extra -> map -> QueryBuilder`).
+
 Пример вызова из репозитория:
 
 - `Repo.GetVLANRows()`
@@ -117,6 +122,7 @@ queries:
 
 - Общая архитектура: `docs/architecture-overview.md`
 - Поток enrich/persist интерфейсов: `docs/interface-enrichment-flow.md`
+- Пошагово про добавление нового query: `docs/adding-flexible-queries.md`
 
 ## 10) Батчевый режим для больших инвентарей
 

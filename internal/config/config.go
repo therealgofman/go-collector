@@ -16,9 +16,9 @@ import (
 )
 
 type AppSection struct {
-	Name    string       `yaml:"name"`
-	Version string       `yaml:"version"`
-	SNMP    AppSNMP      `yaml:"snmp"`
+	Name    string         `yaml:"name"`
+	Version string         `yaml:"version"`
+	SNMP    AppSNMP        `yaml:"snmp"`
 	Raw     map[string]any `yaml:",inline"`
 }
 
@@ -55,21 +55,21 @@ type CompanyConfig struct {
 }
 
 type CompanySection struct {
-	Name                   string   `yaml:"name"`
-	DBTemplate             string   `yaml:"db_template"`
-	PersistDisabledQueries []string `yaml:"persist_disabled_queries"`
-	UpdateSysnameSNMP      *bool    `yaml:"update_sysname_snmp"`
+	Name                   string         `yaml:"name"`
+	DBTemplate             string         `yaml:"db_template"`
+	PersistDisabledQueries []string       `yaml:"persist_disabled_queries"`
+	UpdateSysnameSNMP      *bool          `yaml:"update_sysname_snmp"`
 	Raw                    map[string]any `yaml:",inline"`
 }
 
 type DatabaseSection struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Name     string `yaml:"name"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	Charset  string `yaml:"charset"`
-	Readonly bool   `yaml:"readonly"`
+	Host     string         `yaml:"host"`
+	Port     int            `yaml:"port"`
+	Name     string         `yaml:"name"`
+	User     string         `yaml:"user"`
+	Password string         `yaml:"password"`
+	Charset  string         `yaml:"charset"`
+	Readonly bool           `yaml:"readonly"`
 	Raw      map[string]any `yaml:",inline"`
 }
 
@@ -200,8 +200,8 @@ func (c *CompanyConfig) DBURL(a *AppConfig) (string, error) {
 
 func (c *CompanySection) AsMap() map[string]any {
 	out := map[string]any{
-		"name":                    c.Name,
-		"db_template":             c.DBTemplate,
+		"name":                     c.Name,
+		"db_template":              c.DBTemplate,
 		"persist_disabled_queries": c.PersistDisabledQueries,
 	}
 	if c.UpdateSysnameSNMP != nil {

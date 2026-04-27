@@ -1,4 +1,4 @@
-// Package db открывает пул MySQL через sqlx, строит SQL из YAML (QueryBuilder) и отдаёт строки/Exec для persist.
+// Package db содержит репозиторий SQL-запросов.
 package db
 
 import (
@@ -7,20 +7,27 @@ import (
 	"strings"
 
 	"go-collector/internal/config"
-	"go-collector/internal/helpers"
 	"go-collector/internal/snmp"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
 
-// Repository держит соединение, конфиг компании/app, билдер SQL и флаг readonly (database.readonly в yaml).
+// Repository выполняет SQL-запросы; подключение и зависимости передаются через DI.
 type Repository struct {
 	DB       *sqlx.DB
 	Company  *config.CompanyConfig
 	App      *config.AppConfig
 	QB       *config.QueryBuilder
+	store    *templatedStore
 	Readonly bool
+}
+
+// Deps описывает зависимости репозитория для явного DI.
+type Deps struct {
+	DB      *sqlx.DB
+	Company *config.CompanyConfig
+	App     *config.AppConfig
+	QB      *config.QueryBuilder
 }
 
 type VLANRow struct {
@@ -34,173 +41,152 @@ type VRFRow struct {
 	Name string
 }
 
-func mapTypedRows[T any](rows []map[string]any, mapper func(map[string]any) (T, bool)) []T {
-	out := make([]T, 0, len(rows))
-	for _, row := range rows {
-		v, ok := mapper(row)
-		if !ok {
-			continue
-		}
-		out = append(out, v)
-	}
-	return out
+type bindPort struct {
+	PortID      int    `db:"port_id"`
+	Name        string `db:"name"`
+	Trunk       int    `db:"trunk"`
+	Description string `db:"description"`
+	Disabled    int    `db:"disabled"`
+	IfIndex     int    `db:"ifindex"`
 }
 
-func stringMapToAny(m map[string]string) map[string]any {
-	if len(m) == 0 {
-		return map[string]any{}
-	}
-	out := make(map[string]any, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
+type bindInsertPort struct {
+	SwitchID    int    `db:"switch_id"`
+	Trunk       int    `db:"trunk"`
+	Name        string `db:"name"`
+	Description string `db:"description"`
+	IfIndex     int    `db:"ifindex"`
+	Role        string `db:"role"`
 }
 
-// NewRepository собирает DSN, открывает mysql, проверяет get_ping, выставляет Readonly из company.Database["readonly"].
-func NewRepository(company *config.CompanyConfig, app *config.AppConfig) (*Repository, error) {
-	url, err := company.DBURL(app)
-	if err != nil {
-		return nil, err
+type bindPortID struct {
+	PortID int `db:"port_id"`
+}
+
+type bindPortVLAN struct {
+	PortID int `db:"port_id"`
+	VLANID int `db:"vlan_id"`
+}
+
+type bindARPTable struct {
+	VRFID    int    `db:"vrf_id"`
+	IP       string `db:"ip"`
+	MAC      uint64 `db:"mac"`
+	VLANID   int    `db:"vlan_id"`
+	SwitchID int    `db:"switch_id"`
+}
+
+type bindSwitchSysname struct {
+	SwitchID    int    `db:"switch_id"`
+	SysnameSNMP string `db:"sysname_snmp"`
+}
+
+type bindMACForward struct {
+	PortID int    `db:"port_id"`
+	VLANID int    `db:"vlan_id"`
+	MAC    uint64 `db:"mac"`
+	Status int    `db:"sta"`
+}
+
+type bindPersistHook struct {
+	SwitchID    int    `db:"switch_id"`
+	PortID      int    `db:"port_id"`
+	IfIndex     int    `db:"ifindex"`
+	Name        string `db:"name"`
+	Trunk       int    `db:"trunk"`
+	Description string `db:"description"`
+	Disabled    int    `db:"disabled"`
+}
+
+type bindBoundary struct {
+	BoundaryBefore int `db:"boundary_before"`
+}
+
+type bindBoundaryVLAN struct {
+	BoundaryBefore int `db:"boundary_before"`
+	VLANID         int `db:"vlan_id"`
+}
+
+type bindPortIDsIn struct {
+	PortIDsIn string `db:"port_ids_in"`
+}
+
+type bindSwitchID struct {
+	SwitchID int `db:"switch_id"`
+}
+
+type bindSwitchIfIndex struct {
+	SwitchID int `db:"switch_id"`
+	IfIndex  int `db:"ifindex"`
+}
+
+type bindSwitchName struct {
+	SwitchID int    `db:"switch_id"`
+	Name     string `db:"name"`
+}
+
+func nullIntToInt(v sql.NullInt64) int {
+	if !v.Valid {
+		return 0
 	}
-	db, err := sqlx.Open("mysql", url)
-	if err != nil {
-		return nil, err
+	return int(v.Int64)
+}
+
+// NewRepository создаёт репозиторий из внешне переданных зависимостей.
+func NewRepository(deps Deps) (*Repository, error) {
+	if deps.DB == nil {
+		return nil, fmt.Errorf("nil db")
+	}
+	if deps.Company == nil {
+		return nil, fmt.Errorf("nil company config")
+	}
+	if deps.App == nil {
+		return nil, fmt.Errorf("nil app config")
+	}
+	qb := deps.QB
+	if qb == nil {
+		qb = config.NewQueryBuilder(deps.Company, deps.App)
 	}
 	r := &Repository{
-		DB:       db,
-		Company:  company,
-		App:      app,
-		QB:       config.NewQueryBuilder(company, app),
-		Readonly: company.Database.Readonly,
-	}
-	if err := r.TestConnection(); err != nil {
-		return nil, err
+		DB:       deps.DB,
+		Company:  deps.Company,
+		App:      deps.App,
+		QB:       qb,
+		store:    newTemplatedStore(deps.DB, qb),
+		Readonly: deps.Company.Database.Readonly,
 	}
 	return r, nil
 }
 
-// Close закрывает пул соединений.
-func (r *Repository) Close() error { return r.DB.Close() }
-
-// TestConnection выполняет шаблон get_ping (SELECT 1) для проверки доступа к БД.
-func (r *Repository) TestConnection() error {
-	sql, err := r.QB.Build("get_ping", nil, nil)
-	if err != nil {
-		return err
-	}
-	var one int
-	return r.DB.Get(&one, sql)
-}
-
-// queryRows выполняет именованный запрос без extra-контекста, сканирует строки в []map (байты → string).
-func (r *Repository) queryRows(name string, bind map[string]any) ([]map[string]any, error) {
-	if bind == nil {
-		bind = map[string]any{}
-	}
-	sql, err := r.QB.Build(name, bind, nil)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.DB.NamedQuery(sql, bind)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		m := map[string]any{}
-		if err := rows.MapScan(m); err != nil {
-			return nil, err
-		}
-		for k, v := range m {
-			if b, ok := v.([]byte); ok {
-				m[k] = string(b)
-			}
-		}
-		out = append(out, m)
-	}
-	return out, nil
-}
-
-// exec выполняет именованный не-SELECT запрос; при Readonly возвращает ошибку без обращения к БД.
-func (r *Repository) exec(name string, bind map[string]any, extra map[string]any) (int64, error) {
-	if r.Readonly {
-		return 0, fmt.Errorf("readonly")
-	}
-	if bind == nil {
-		bind = map[string]any{}
-	}
-	sql, err := r.QB.Build(name, bind, extra)
-	if err != nil {
-		return 0, err
-	}
-	res, err := r.DB.NamedExec(sql, bind)
-	if err != nil {
-		return 0, err
-	}
-	aff, _ := res.RowsAffected()
-	return aff, nil
-}
-
-// execInsertLastID выполняет INSERT и возвращает LastInsertId (для insert_port).
-func (r *Repository) execInsertLastID(name string, bind map[string]any, extra map[string]any) (int64, error) {
-	if r.Readonly {
-		return 0, fmt.Errorf("readonly")
-	}
-	if bind == nil {
-		bind = map[string]any{}
-	}
-	sql, err := r.QB.Build(name, bind, extra)
-	if err != nil {
-		return 0, err
-	}
-	res, err := r.DB.NamedExec(sql, bind)
-	if err != nil {
-		return 0, err
-	}
-	last, err := res.LastInsertId()
-	if err != nil {
-		return 0, nil
-	}
-	return last, nil
-}
-
 func (r *Repository) UpdatePort(portID int, name string, trunk int, description string, disabled int, ifindex int, extra map[string]string) error {
-	bind := map[string]any{
-		"port_id":     portID,
-		"name":        name,
-		"trunk":       trunk,
-		"description": description,
-		"disabled":    disabled,
-		"ifindex":     ifindex,
+	port := bindPort{
+		PortID:      portID,
+		Name:        name,
+		Trunk:       trunk,
+		Description: description,
+		Disabled:    disabled,
+		IfIndex:     ifindex,
 	}
-	for k, v := range extra {
-		if _, exists := bind[k]; exists {
-			continue
-		}
-		bind[k] = v
+	if r.Readonly {
+		return fmt.Errorf("readonly")
 	}
-	_, err := r.exec("update_port", bind, nil)
+	_, err := r.store.exec("update_port", port, extra)
 	return err
 }
 
 func (r *Repository) InsertPort(switchID int, trunk int, name string, description string, ifindex int, role string, extra map[string]string) (int, error) {
-	bind := map[string]any{
-		"switch_id":   switchID,
-		"trunk":       trunk,
-		"name":        name,
-		"description": description,
-		"ifindex":     ifindex,
-		"role":        role,
+	port := bindInsertPort{
+		SwitchID:    switchID,
+		Trunk:       trunk,
+		Name:        name,
+		Description: description,
+		IfIndex:     ifindex,
+		Role:        role,
 	}
-	for k, v := range extra {
-		if _, exists := bind[k]; exists {
-			continue
-		}
-		bind[k] = v
+	if r.Readonly {
+		return 0, fmt.Errorf("readonly")
 	}
-	last, err := r.execInsertLastID("insert_port", bind, nil)
+	last, err := r.store.insertLastID("insert_port", port, extra)
 	if err != nil {
 		return 0, err
 	}
@@ -208,62 +194,76 @@ func (r *Repository) InsertPort(switchID int, trunk int, name string, descriptio
 }
 
 func (r *Repository) DeletePort2VLANByPort(portID int) error {
-	_, err := r.exec("delete_port2vlan_by_port", map[string]any{"port_id": portID}, nil)
+	if r.Readonly {
+		return fmt.Errorf("readonly")
+	}
+	_, err := r.store.exec("delete_port2vlan_by_port", bindPortID{PortID: portID}, nil)
 	return err
 }
 
 func (r *Repository) InsertPort2VLAN(portID int, vlanID int) error {
-	_, err := r.exec("insert_port2vlan", map[string]any{"port_id": portID, "vlan_id": vlanID}, nil)
+	if r.Readonly {
+		return fmt.Errorf("readonly")
+	}
+	_, err := r.store.exec("insert_port2vlan", bindPortVLAN{PortID: portID, VLANID: vlanID}, nil)
 	return err
 }
 
 func (r *Repository) UpdateARPTable(vrfID int, ip string, mac uint64, vlanID int, switchID int) (int64, error) {
-	return r.exec("update_arp_table", map[string]any{
-		"vrf_id": vrfID, "ip": ip, "mac": mac, "vlan_id": vlanID, "switch_id": switchID,
+	if r.Readonly {
+		return 0, fmt.Errorf("readonly")
+	}
+	return r.store.exec("update_arp_table", bindARPTable{
+		VRFID: vrfID, IP: ip, MAC: mac, VLANID: vlanID, SwitchID: switchID,
 	}, nil)
 }
 
 func (r *Repository) UpdateSwitchSysnameSNMP(switchID int, sysname string) error {
-	_, err := r.exec("update_switch_sysname_snmp", map[string]any{"switch_id": switchID, "sysname_snmp": sysname}, nil)
+	if r.Readonly {
+		return fmt.Errorf("readonly")
+	}
+	_, err := r.store.exec("update_switch_sysname_snmp", bindSwitchSysname{SwitchID: switchID, SysnameSNMP: sysname}, nil)
 	return err
 }
 
 func (r *Repository) UpsertMACForward(portID int, vlanID int, mac uint64, sta int) (int64, error) {
-	return r.exec("upsert_mac_forward", map[string]any{
-		"port_id": portID, "vlan_id": vlanID, "mac": mac, "sta": sta,
-	}, nil)
+	if r.Readonly {
+		return 0, fmt.Errorf("readonly")
+	}
+	return r.store.exec("upsert_mac_forward", bindMACForward{PortID: portID, VLANID: vlanID, MAC: mac, Status: sta}, nil)
 }
 
 func (r *Repository) ExecPortPersistHook(query string, switchID int, portID int, ifindex int, name string, trunk int, description string, disabled int, params map[string]string) error {
-	bind := map[string]any{
-		"switch_id":   switchID,
-		"port_id":     portID,
-		"ifindex":     ifindex,
-		"name":        name,
-		"trunk":       trunk,
-		"description": description,
-		"disabled":    disabled,
+	bind := bindPersistHook{
+		SwitchID: switchID, PortID: portID, IfIndex: ifindex, Name: name,
+		Trunk: trunk, Description: description, Disabled: disabled,
 	}
-	for k, v := range stringMapToAny(params) {
-		bind[k] = v
+	if r.Readonly {
+		return fmt.Errorf("readonly")
 	}
-	_, err := r.exec(query, bind, nil)
+	_, err := r.store.exec(query, bind, params)
 	return err
 }
 
 func (r *Repository) MarkMACObsoleteGlobal(boundaryBefore int, portIDsIn string) (int64, error) {
-	return r.exec(
+	if r.Readonly {
+		return 0, fmt.Errorf("readonly")
+	}
+	return r.store.exec(
 		"mark_mac_obsolete_global",
-		map[string]any{"boundary_before": boundaryBefore},
-		map[string]any{"port_ids_in": portIDsIn},
+		bindBoundary{BoundaryBefore: boundaryBefore},
+		bindPortIDsIn{PortIDsIn: portIDsIn},
 	)
 }
 
 func (r *Repository) MarkMACObsoleteByVLAN(boundaryBefore int, vlanID int, portIDsIn string) (int64, error) {
-	return r.exec(
+	if r.Readonly {
+		return 0, fmt.Errorf("readonly")
+	}
+	return r.store.exec(
 		"mark_mac_obsolete_by_vlan",
-		map[string]any{"boundary_before": boundaryBefore, "vlan_id": vlanID},
-		map[string]any{"port_ids_in": portIDsIn},
+		bindBoundaryVLAN{BoundaryBefore: boundaryBefore, VLANID: vlanID},
+		bindPortIDsIn{PortIDsIn: portIDsIn},
 	)
 }
 
@@ -282,17 +282,17 @@ func cleanSwitchField(s string) string {
 }
 
 func (r *Repository) getSwitchRows(name string, switchID *int) ([]snmp.SwitchRow, error) {
-	bind := map[string]any{}
-	if switchID != nil {
-		bind["switch_id"] = *switchID
-	}
-	sqlText, err := r.QB.Build(name, bind, bind)
-	if err != nil {
-		return nil, err
-	}
 	// В шаблонах компаний могут быть дополнительные поля (например model_id):
 	// Unsafe позволяет StructScan читать нужные колонки и игнорировать остальные.
-	rows, err := r.DB.Unsafe().NamedQuery(sqlText, bind)
+	var (
+		rows *sqlx.Rows
+		err  error
+	)
+	if switchID != nil {
+		rows, err = r.store.query(name, bindSwitchID{SwitchID: *switchID}, nil)
+	} else {
+		rows, err = r.store.query(name, nil, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -365,67 +365,111 @@ func (r *Repository) BuildMACDBContext(switchID int) (*snmp.MacDbContext, error)
 }
 
 func (r *Repository) GetVLANRows() ([]VLANRow, error) {
-	rows, err := r.queryRows("get_vlans", nil)
+	type vlanDBRow struct {
+		DVLANID  sql.NullInt64  `db:"d_vlan_id"`
+		VLANID   sql.NullInt64  `db:"vlan_id"`
+		Number   sql.NullInt64  `db:"number"`
+		DomainID sql.NullString `db:"domain_id"`
+	}
+	rows, err := r.store.query("get_vlans", nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	out := mapTypedRows(rows, func(row map[string]any) (VLANRow, bool) {
-		vid, ok := helpers.FirstExistingInt(row, "d_vlan_id", "vlan_id")
-		if !ok {
-			return VLANRow{}, false
+	defer rows.Close()
+	out := make([]VLANRow, 0)
+	for rows.Next() {
+		var row vlanDBRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
 		}
-		number, ok := helpers.AsInt(row["number"])
-		if !ok {
-			return VLANRow{}, false
+		vid := nullIntToInt(row.DVLANID)
+		if vid == 0 {
+			vid = nullIntToInt(row.VLANID)
 		}
-		return VLANRow{
+		if vid == 0 || !row.Number.Valid {
+			continue
+		}
+		out = append(out, VLANRow{
 			VLANID:   vid,
-			Number:   number,
-			DomainID: helpers.AsString(row["domain_id"]),
-		}, true
-	})
+			Number:   int(row.Number.Int64),
+			DomainID: strings.TrimSpace(strings.ReplaceAll(row.DomainID.String, "\x00", "")),
+		})
+	}
 	return out, nil
 }
 
 func (r *Repository) GetVRFRows() ([]VRFRow, error) {
-	rows, err := r.queryRows("get_vrf_map", nil)
+	type vrfDBRow struct {
+		ID   sql.NullInt64  `db:"id"`
+		Name sql.NullString `db:"name"`
+	}
+	rows, err := r.store.query("get_vrf_map", nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	out := mapTypedRows(rows, func(row map[string]any) (VRFRow, bool) {
-		id, ok := helpers.AsInt(row["id"])
-		if !ok || id <= 0 {
-			return VRFRow{}, false
+	defer rows.Close()
+	out := make([]VRFRow, 0)
+	for rows.Next() {
+		var row vrfDBRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
 		}
-		name := helpers.AsString(row["name"])
+		if !row.ID.Valid || row.ID.Int64 <= 0 {
+			continue
+		}
+		name := strings.TrimSpace(strings.ReplaceAll(row.Name.String, "\x00", ""))
 		if name == "" {
-			return VRFRow{}, false
+			continue
 		}
-		return VRFRow{ID: id, Name: name}, true
-	})
+		out = append(out, VRFRow{ID: int(row.ID.Int64), Name: name})
+	}
 	return out, nil
 }
 
 func (r *Repository) GetPortIDByIfIndex(switchID, ifidx int) (int, bool, error) {
-	rows, err := r.queryRows("get_port_by_ifindex", map[string]any{"switch_id": switchID, "ifindex": ifidx})
-	if err != nil || len(rows) == 0 {
+	type portIDRow struct {
+		PortID  sql.NullInt64 `db:"port_id"`
+		DPortID sql.NullInt64 `db:"d_port_id"`
+	}
+	rows, err := r.store.query("get_port_by_ifindex", bindSwitchIfIndex{SwitchID: switchID, IfIndex: ifidx}, nil)
+	if err != nil {
 		return 0, false, err
 	}
-	for _, v := range rows[0] {
-		n, ok := helpers.AsInt(v)
-		return n, ok, nil
+	defer rows.Close()
+	if rows.Next() {
+		var row portIDRow
+		if err := rows.StructScan(&row); err != nil {
+			return 0, false, err
+		}
+		id := nullIntToInt(row.PortID)
+		if id == 0 {
+			id = nullIntToInt(row.DPortID)
+		}
+		return id, id > 0, nil
 	}
 	return 0, false, nil
 }
 
 func (r *Repository) GetPortIDByName(switchID int, name string) (int, bool, error) {
-	rows, err := r.queryRows("get_port_by_name", map[string]any{"switch_id": switchID, "name": name})
-	if err != nil || len(rows) == 0 {
+	type portIDRow struct {
+		PortID  sql.NullInt64 `db:"port_id"`
+		DPortID sql.NullInt64 `db:"d_port_id"`
+	}
+	rows, err := r.store.query("get_port_by_name", bindSwitchName{SwitchID: switchID, Name: name}, nil)
+	if err != nil {
 		return 0, false, err
 	}
-	for _, v := range rows[0] {
-		n, ok := helpers.AsInt(v)
-		return n, ok, nil
+	defer rows.Close()
+	if rows.Next() {
+		var row portIDRow
+		if err := rows.StructScan(&row); err != nil {
+			return 0, false, err
+		}
+		id := nullIntToInt(row.PortID)
+		if id == 0 {
+			id = nullIntToInt(row.DPortID)
+		}
+		return id, id > 0, nil
 	}
 	return 0, false, nil
 }
@@ -436,18 +480,31 @@ type IfIndexPortRow struct {
 }
 
 func (r *Repository) GetIfIndexToPortIDRows(switchID int) ([]IfIndexPortRow, error) {
-	rows, err := r.queryRows("get_ifindex_to_port_id", map[string]any{"switch_id": switchID})
+	type ifIndexPortDBRow struct {
+		IfIndex sql.NullInt64 `db:"ifindex"`
+		PortID  sql.NullInt64 `db:"port_id"`
+		DPortID sql.NullInt64 `db:"d_port_id"`
+	}
+	rows, err := r.store.query("get_ifindex_to_port_id", bindSwitchID{SwitchID: switchID}, nil)
 	if err != nil {
 		return nil, err
 	}
-	out := mapTypedRows(rows, func(row map[string]any) (IfIndexPortRow, bool) {
-		ifi, _ := helpers.AsInt(row["ifindex"])
-		pid, ok := helpers.FirstExistingInt(row, "port_id", "d_port_id")
-		if !ok {
-			pid = 0
+	defer rows.Close()
+	out := make([]IfIndexPortRow, 0)
+	for rows.Next() {
+		var row ifIndexPortDBRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
 		}
-		return IfIndexPortRow{IfIndex: ifi, PortID: pid}, true
-	})
+		pid := nullIntToInt(row.PortID)
+		if pid == 0 {
+			pid = nullIntToInt(row.DPortID)
+		}
+		out = append(out, IfIndexPortRow{
+			IfIndex: nullIntToInt(row.IfIndex),
+			PortID:  pid,
+		})
+	}
 	return out, nil
 }
 
@@ -457,15 +514,26 @@ type IfIndexVLANRow struct {
 }
 
 func (r *Repository) GetIfIndexToUntaggedVLANRows(switchID int) ([]IfIndexVLANRow, error) {
-	rows, err := r.queryRows("get_ifindex_untagged_vlan", map[string]any{"switch_id": switchID})
+	type ifIndexVLANDBRow struct {
+		IfIndex sql.NullInt64 `db:"ifindex"`
+		Number  sql.NullInt64 `db:"number"`
+	}
+	rows, err := r.store.query("get_ifindex_untagged_vlan", bindSwitchID{SwitchID: switchID}, nil)
 	if err != nil {
 		return nil, err
 	}
-	out := mapTypedRows(rows, func(row map[string]any) (IfIndexVLANRow, bool) {
-		ifi, _ := helpers.AsInt(row["ifindex"])
-		number, _ := helpers.AsInt(row["number"])
-		return IfIndexVLANRow{IfIndex: ifi, Number: number}, true
-	})
+	defer rows.Close()
+	out := make([]IfIndexVLANRow, 0)
+	for rows.Next() {
+		var row ifIndexVLANDBRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
+		}
+		out = append(out, IfIndexVLANRow{
+			IfIndex: nullIntToInt(row.IfIndex),
+			Number:  nullIntToInt(row.Number),
+		})
+	}
 	return out, nil
 }
 
@@ -475,33 +543,52 @@ type IdxcomVLANRow struct {
 }
 
 func (r *Repository) GetIdxcomVLANRows(switchID int) ([]IdxcomVLANRow, error) {
-	rows, err := r.queryRows("get_vlan_list_for_mac_idxcom", map[string]any{"switch_id": switchID})
+	type idxcomVLANDBRow struct {
+		Number  sql.NullInt64 `db:"number"`
+		VLANID  sql.NullInt64 `db:"vlan_id"`
+		DVLANID sql.NullInt64 `db:"d_vlan_id"`
+	}
+	rows, err := r.store.query("get_vlan_list_for_mac_idxcom", bindSwitchID{SwitchID: switchID}, nil)
 	if err != nil {
 		return nil, err
 	}
-	out := mapTypedRows(rows, func(row map[string]any) (IdxcomVLANRow, bool) {
-		number, _ := helpers.AsInt(row["number"])
-		vid, ok := helpers.FirstExistingInt(row, "vlan_id", "d_vlan_id")
-		if !ok {
-			vid = 0
+	defer rows.Close()
+	out := make([]IdxcomVLANRow, 0)
+	for rows.Next() {
+		var row idxcomVLANDBRow
+		if err := rows.StructScan(&row); err != nil {
+			return nil, err
 		}
-		return IdxcomVLANRow{Number: number, VLANID: vid}, true
-	})
+		vid := nullIntToInt(row.VLANID)
+		if vid == 0 {
+			vid = nullIntToInt(row.DVLANID)
+		}
+		out = append(out, IdxcomVLANRow{
+			Number: nullIntToInt(row.Number),
+			VLANID: vid,
+		})
+	}
 	return out, nil
 }
 
 func (r *Repository) GetSNMPTimestampBoundaryBefore() (int, error) {
-	rows, err := r.queryRows("get_snmp_timestamp_boundary", nil)
+	type tsRow struct {
+		TS sql.NullInt64 `db:"ts"`
+	}
+	rows, err := r.store.query("get_snmp_timestamp_boundary", nil, nil)
 	if err != nil {
 		return 0, err
 	}
-	if len(rows) == 0 {
+	defer rows.Close()
+	if !rows.Next() {
 		return 0, fmt.Errorf("empty get_snmp_timestamp_boundary")
 	}
-	v, ok := helpers.AsInt(rows[0]["ts"])
-	if !ok {
+	var row tsRow
+	if err := rows.StructScan(&row); err != nil {
+		return 0, err
+	}
+	if !row.TS.Valid {
 		return 0, fmt.Errorf("invalid ts in get_snmp_timestamp_boundary")
 	}
-	return v, nil
+	return int(row.TS.Int64), nil
 }
-

@@ -70,7 +70,7 @@ m.ifaceCollect = snmp.NewIfaceCollectorWithEnrich(
 Дополнительно: все нестандартные поля порта (из `InterfacePort.Extra`)
 автоматически прокидываются в bind для `update_port` и `insert_port`.
 Это позволяет компаниям сохранять расширенные колонки прямо в таблицу портов
-только через правку SQL-шаблона в `company.yaml`, без изменений кода persist.
+только через правку SQL-шаблона в `config/companies/<company>.yaml`, без изменений кода persist.
 
 Для каждой операции persist автоматически добавляет базовые bind-параметры:
 
@@ -169,10 +169,12 @@ ports["10101"] = snmp.InterfacePort{
 ## 7) Рекомендуемые соглашения
 
 - Имена query (Рекомендуемое имя): `upsert_port_<feature>`
-- Выход collector должен быть transport-like; бизнес-SQL живет в `company.yaml`
+- Выход collector должен быть transport-like; бизнес-SQL живет в `config/companies/<company>.yaml`
 - Одна логическая фича = один persist query
 - Query лучше делать идемпотентным (`INSERT ... ON DUPLICATE KEY UPDATE`)
 - Если фича опциональна, управляйте ей через `persist_disabled_queries`
+
+Связанный пошаговый гайд: `docs/adding-flexible-queries.md`
 
 ## 8) Пример Cisco port-security
 
