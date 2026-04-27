@@ -14,7 +14,7 @@ func (m *Device) CollectInterfaces() (snmp.InterfacePorts, error) {
 	return m.ifaceCollect.CollectInterfaces(m.client)
 }
 
-func (m *Device) CollectARP() (map[string]map[string]string, error) {
+func (m *Device) CollectARP() (snmp.ARPTable, error) {
 	return m.arpCollect.CollectARP(m.client)
 }
 

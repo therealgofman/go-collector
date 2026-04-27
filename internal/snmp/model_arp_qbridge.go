@@ -16,23 +16,23 @@ func NewHuaweiARPQBridge(hooks qBridgeARPHooks) VendorARPCollector {
 }
 
 // CollectARP (Q-BRIDGE main): ifName extended, dot1qVlanStaticName, ARP; затем hook MergeIfIndexToVLANForARP при наличии.
-func (m *qbridgeMainARP) CollectARP(c *Client) (map[string]map[string]string, error) {
+func (m *qbridgeMainARP) CollectARP(c *Client) (ARPTable, error) {
 	ifn, err := c.Walk("1.3.6.1.2.1.31.1.1.1.1", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	vsn, err := c.Walk("1.3.6.1.2.1.17.7.1.4.3.1.1", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	arp, err := c.Walk("1.3.6.1.2.1.4.22.1.2", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	ivQ := ifindexToVLANQBridge(ifn, vsn)
 	iv := ivQ
 	if m.hooks != nil {
 		iv = m.hooks.MergeIfIndexToVLANForARP(ivQ, ifn, vsn)
 	}
-	return joinARPToVLAN(arp, iv), nil
+	return ARPTable{Entries: joinARPToVLAN(arp, iv)}, nil
 }

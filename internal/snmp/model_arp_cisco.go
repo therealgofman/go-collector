@@ -21,14 +21,14 @@ func NewCiscoL3RouterARP() VendorARPCollector {
 }
 
 // CollectARP (Cisco): ifDescr, ARP table, VLAN из имён Vlan*.
-func (*ciscoARPVlanIf) CollectARP(c *Client) (map[string]map[string]string, error) {
+func (*ciscoARPVlanIf) CollectARP(c *Client) (ARPTable, error) {
 	ifd, err := c.Walk("1.3.6.1.2.1.2.2.1.2", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	arp, err := c.Walk("1.3.6.1.2.1.4.22.1.2", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	iv := map[string]string{}
 	re := regexp.MustCompile(`(?i)Vlan.*?(\d+)`)
@@ -38,7 +38,7 @@ func (*ciscoARPVlanIf) CollectARP(c *Client) (map[string]map[string]string, erro
 			iv[ifidx] = mm[1]
 		}
 	}
-	return joinARPToVLAN(arp, iv), nil
+	return ARPTable{Entries: joinARPToVLAN(arp, iv)}, nil
 }
 
 func decodeCiscoVRFNameFromOIDPrefix(prefix string) string {
@@ -55,14 +55,14 @@ func decodeCiscoVRFNameFromOIDPrefix(prefix string) string {
 }
 
 // CollectARP (Cisco L3 router): ifIndex->vlan[@vrf] через cviRoutedVlanIfIndex + mplsVpnInterfaceConfRowStatus, затем ARP по ipNetToMedia.
-func (*ciscoARPL3Router) CollectARP(c *Client) (map[string]map[string]string, error) {
+func (*ciscoARPL3Router) CollectARP(c *Client) (ARPTable, error) {
 	ifd, err := c.Walk("1.3.6.1.4.1.9.9.128.1.1.1.1.3", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	arp, err := c.Walk("1.3.6.1.2.1.4.22.1.2", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	mvis, err := c.Walk("1.3.6.1.3.118.1.2.1.1.6", "")
 	if err != nil {
@@ -101,5 +101,5 @@ func (*ciscoARPL3Router) CollectARP(c *Client) (map[string]map[string]string, er
 		iv[ifidx] = vlanName
 	}
 
-	return joinARPToVLAN(arp, iv), nil
+	return ARPTable{Entries: joinARPToVLAN(arp, iv)}, nil
 }

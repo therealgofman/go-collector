@@ -405,7 +405,7 @@ func (p *Service) PersistARP(results []snmp.PollResult) (PersistARPStats, error)
 	mysqlAffected := int64(0)
 	prepareErrors := []string{}
 	for _, pr := range results {
-		if !pr.Success || pr.ArpTable == nil {
+		if !pr.Success || len(pr.ArpTable.Entries) == 0 {
 			continue
 		}
 		sid := pr.Switch.ID
@@ -415,7 +415,7 @@ func (p *Service) PersistARP(results []snmp.PollResult) (PersistARPStats, error)
 		}
 		hostCtx := fmt.Sprintf("switch_id=%d, ip=%s", sid, pr.IP)
 		domainID := pr.Switch.DomainID
-		for vlanKey, ips := range pr.ArpTable {
+		for vlanKey, ips := range pr.ArpTable.Entries {
 			vlanNum, vrfName, ok := splitVLANVRF(vlanKey)
 			if !ok {
 				prepareErrors = append(prepareErrors, fmt.Sprintf("%s: ключ VLAN в таблице ARP %q не разобран", hostCtx, vlanKey))

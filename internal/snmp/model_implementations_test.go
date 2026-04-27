@@ -84,7 +84,7 @@ func TestNoopARPCollectorImplementation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(got) != 0 {
+	if len(got.Entries) != 0 {
 		t.Fatalf("expected empty map, got=%v", got)
 	}
 }

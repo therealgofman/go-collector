@@ -125,7 +125,7 @@ func PrintArpPollSummary(results []snmp.PollResult) {
 			fmt.Printf("\n[%s] ARP @ %s: failed - %s\n", label, r.IP, err)
 			continue
 		}
-		if len(r.ArpTable) == 0 {
+		if len(r.ArpTable.Entries) == 0 {
 			if r.ArpSkipped {
 				fmt.Printf("\n[%s] ARP @ %s: (skip by strategy)\n", label, r.IP)
 			} else {
@@ -138,8 +138,8 @@ func PrintArpPollSummary(results []snmp.PollResult) {
 			vlan string
 			n    int
 		}
-		ps := make([]pair, 0, len(r.ArpTable))
-		for vlan, ips := range r.ArpTable {
+		ps := make([]pair, 0, len(r.ArpTable.Entries))
+		for vlan, ips := range r.ArpTable.Entries {
 			n := len(ips)
 			total += n
 			ps = append(ps, pair{vlan: vlan, n: n})

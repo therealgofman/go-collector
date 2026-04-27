@@ -229,7 +229,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		if got["100"]["192.0.2.1"] != "aa:bb:cc:dd:ee:ff" {
+		if got.Entries["100"]["192.0.2.1"] != "aa:bb:cc:dd:ee:ff" {
 			t.Fatalf("unexpected result: %v", got)
 		}
 	})
@@ -244,7 +244,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		if got["100"]["192.0.2.2"] != "aa:aa:aa:aa:aa:aa" {
+		if got.Entries["100"]["192.0.2.2"] != "aa:aa:aa:aa:aa:aa" {
 			t.Fatalf("unexpected result: %v", got)
 		}
 	})
@@ -258,7 +258,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		if got["100"]["192.0.2.3"] != "bb:bb:bb:bb:bb:bb" {
+		if got.Entries["100"]["192.0.2.3"] != "bb:bb:bb:bb:bb:bb" {
 			t.Fatalf("unexpected result: %v", got)
 		}
 	})
@@ -274,7 +274,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		if got["200"]["192.0.2.4"] != "01:02:03:04:05:06" {
+		if got.Entries["200"]["192.0.2.4"] != "01:02:03:04:05:06" {
 			t.Fatalf("unexpected result: %v", got)
 		}
 	})
@@ -288,7 +288,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		if got["100"]["192.0.2.5"] != "cc:cc:cc:cc:cc:cc" {
+		if got.Entries["100"]["192.0.2.5"] != "cc:cc:cc:cc:cc:cc" {
 			t.Fatalf("unexpected result: %v", got)
 		}
 	})
@@ -303,7 +303,7 @@ func TestCollectorsARPImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		if got["100@red"]["192.0.2.6"] != "dd:dd:dd:dd:dd:dd" {
+		if got.Entries["100@red"]["192.0.2.6"] != "dd:dd:dd:dd:dd:dd" {
 			t.Fatalf("unexpected result: %v", got)
 		}
 	})

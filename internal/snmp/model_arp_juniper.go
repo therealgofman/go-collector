@@ -43,19 +43,19 @@ func NewJuniperARP() VendorARPCollector {
 
 // CollectARP (Juniper): ifName + ipNetToMediaPhysAddress; VLAN из unit в имени интерфейса; merge с Q-BRIDGE при совпадении имён.
 // Таблицу ARP обходим BulkWalk (GETBULK); ifName и dot1qVlanStaticName — Walk (GETNEXT).
-func (*juniperARP) CollectARP(c *Client) (map[string]map[string]string, error) {
+func (*juniperARP) CollectARP(c *Client) (ARPTable, error) {
 	ifn, err := c.WalkWithOptions(juniperARPOIDs["ifName"], "", nil)
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	vsn, err := c.WalkWithOptions(juniperARPOIDs["vsn"], "", nil)
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	arpWalkUsesGetBulk := true
 	arp, err := c.WalkWithOptions(juniperARPOIDs["arp"], "", &arpWalkUsesGetBulk)
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	iv := ifindexToVLANJuniper(ifn)
 	for ifidx, v := range ifindexToVLANQBridge(ifn, vsn) {
@@ -63,5 +63,5 @@ func (*juniperARP) CollectARP(c *Client) (map[string]map[string]string, error) {
 			iv[ifidx] = v
 		}
 	}
-	return joinARPToVLAN(arp, iv), nil
+	return ARPTable{Entries: joinARPToVLAN(arp, iv)}, nil
 }

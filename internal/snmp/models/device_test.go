@@ -20,11 +20,11 @@ func (s *ifaceCollectorStub) CollectInterfaces(c *snmp.Client) (snmp.InterfacePo
 
 type arpCollectorStub struct {
 	gotClient *snmp.Client
-	ret       map[string]map[string]string
+	ret       snmp.ARPTable
 	err       error
 }
 
-func (s *arpCollectorStub) CollectARP(c *snmp.Client) (map[string]map[string]string, error) {
+func (s *arpCollectorStub) CollectARP(c *snmp.Client) (snmp.ARPTable, error) {
 	s.gotClient = c
 	return s.ret, s.err
 }
@@ -68,8 +68,10 @@ func TestDeviceCollectInterfacesDelegatesToCollector(t *testing.T) {
 
 func TestDeviceCollectARPDelegatesToCollector(t *testing.T) {
 	client := &snmp.Client{}
-	expected := map[string]map[string]string{
-		"100": {"10.0.0.1": "aa:bb:cc:dd:ee:ff"},
+	expected := snmp.ARPTable{
+		Entries: map[string]map[string]string{
+			"100": {"10.0.0.1": "aa:bb:cc:dd:ee:ff"},
+		},
 	}
 	arpStub := &arpCollectorStub{ret: expected}
 

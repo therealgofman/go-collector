@@ -15,14 +15,14 @@ func NewExtremeARP() VendorARPCollector { return &extremeARP{} }
 func NewExtremeXSeriesARP() VendorARPCollector { return &extremeXSeriesARP{} }
 
 // CollectARP (Extreme): iv[ifIndex]=vlanIf по ключу vlanIf.ifIndex, затем arp ifIndex.ip -> mac.
-func (*extremeARP) CollectARP(c *Client) (map[string]map[string]string, error) {
+func (*extremeARP) CollectARP(c *Client) (ARPTable, error) {
 	ifd, err := c.Walk("1.3.6.1.4.1.1916.1.2.1.2.1.10", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 	arp, err := c.Walk("1.3.6.1.2.1.4.22.1.2", "")
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 
 	re := regexp.MustCompile(`^(\d+)\.(\d+)$`)
@@ -34,11 +34,11 @@ func (*extremeARP) CollectARP(c *Client) (map[string]map[string]string, error) {
 		}
 		iv[strings.TrimSpace(v)] = mm[1]
 	}
-	return joinARPToVLAN(arp, iv), nil
+	return ARPTable{Entries: joinARPToVLAN(arp, iv)}, nil
 }
 
 // CollectARP (Extreme X series): ip/mac/vlanIfIndex таблицы private MIB + map vlanIf->VLAN.
-func (*extremeXSeriesARP) CollectARP(c *Client) (map[string]map[string]string, error) {
+func (*extremeXSeriesARP) CollectARP(c *Client) (ARPTable, error) {
 	w, err := walkNamedOIDs(c, map[string]string{
 		"vlan":    "1.3.6.1.4.1.1916.1.2.1.2.1.10",
 		"ip":      "1.3.6.1.4.1.1916.1.16.2.1.2",
@@ -46,7 +46,7 @@ func (*extremeXSeriesARP) CollectARP(c *Client) (map[string]map[string]string, e
 		"vlanifi": "1.3.6.1.4.1.1916.1.16.2.1.4",
 	}, "", nil)
 	if err != nil {
-		return nil, err
+		return ARPTable{}, err
 	}
 
 	iv := map[string]string{}
@@ -90,5 +90,5 @@ func (*extremeXSeriesARP) CollectARP(c *Client) (map[string]map[string]string, e
 		}
 		out[vlan][ip] = mac
 	}
-	return out, nil
+	return ARPTable{Entries: out}, nil
 }

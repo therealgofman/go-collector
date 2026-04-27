@@ -13,6 +13,6 @@ func NewNoopARP() VendorARPCollector {
 }
 
 // CollectARP всегда возвращает пустой результат без ошибок.
-func (*noopARPCollector) CollectARP(*Client) (map[string]map[string]string, error) {
-	return map[string]map[string]string{}, nil
+func (*noopARPCollector) CollectARP(*Client) (ARPTable, error) {
+	return ARPTable{Entries: map[string]map[string]string{}}, nil
 }

@@ -25,18 +25,23 @@ type PortPersistOp struct {
 
 // InterfacePort - типизированное представление порта интерфейсов.
 type InterfacePort struct {
-	Name      string
-	IfIndex   int
-	Descr     string
-	Disabled  bool
-	Tagged    bool
-	VLANs     map[int]int
-	Persist   []PortPersistOp
-	Extra     map[string]string
+	Name     string
+	IfIndex  int
+	Descr    string
+	Disabled bool
+	Tagged   bool
+	VLANs    map[int]int
+	Persist  []PortPersistOp
+	Extra    map[string]string
 }
 
 // InterfacePorts - коллекция интерфейсов по ключу порта (ifIndex или vendor name).
 type InterfacePorts map[string]InterfacePort
+
+// ARPTable - типизированный контейнер ARP.
+type ARPTable struct {
+	Entries map[string]map[string]string
+}
 
 // MACEntry - типизированная строка FDB.
 type MACEntry struct {
@@ -72,7 +77,7 @@ type SwitchRow struct {
 }
 
 // PollResult — единый контейнер результата опроса одного свитча для poll и persist
-// Заполняется только релевантными для режима полями: Interfaces, ArpTable или MacTable.
+// Заполняется только релевантными для режима полями: Interfaces, ARPTable или MacTable.
 type PollResult struct {
 	SwitchID    string
 	IP          string
@@ -83,7 +88,7 @@ type PollResult struct {
 	Switch      SwitchRow
 	Interfaces  InterfacePorts
 	ArpSkipped  bool
-	ArpTable    map[string]map[string]string
+	ArpTable    ARPTable
 	MacTable    MACTable
 }
 
@@ -105,7 +110,7 @@ type MacDbContext struct {
 // Менять сигнатуры методов нельзя без правок всех вызовов; внутри модели допускается делегирование в Vendor*Collector.
 type Model interface {
 	CollectInterfaces() (InterfacePorts, error)
-	CollectARP() (map[string]map[string]string, error)
+	CollectARP() (ARPTable, error)
 	CollectMAC(*MacDbContext) (MACTable, error)
 }
 
@@ -123,7 +128,7 @@ type VendorIfaceEnricher interface {
 
 // VendorARPCollector — стратегия сбора ARP: группировка vlan → (ip → mac).
 type VendorARPCollector interface {
-	CollectARP(c *Client) (map[string]map[string]string, error)
+	CollectARP(c *Client) (ARPTable, error)
 }
 
 // VendorMACCollector — стратегия сбора MAC/FDB (контракт см. CollectMAC у Model).
