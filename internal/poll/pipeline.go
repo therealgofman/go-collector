@@ -15,7 +15,7 @@ import (
 
 // Options передаёт правила моделей из app.yaml, параметры SNMP и контексты MAC по switch_id.
 type Options struct {
-	Rules                 []map[string]any
+	Rules                 []snmp.ModelRule
 	Concurrency           int
 	DebugSNMP             bool
 	TimeoutSec            float64

@@ -50,8 +50,8 @@ type Client struct {
 	transport snmpTransport
 }
 
-// NewClient нормализует IP/community (убирает нулевые байты), задаёт минимальный таймаут 5 с.
-func NewClient(ip, comm string, timeoutSec float64, retries int, debug, oidTiming bool, getBulkMaxRepetitions int) *Client {
+// New нормализует IP/community (убирает нулевые байты), задаёт минимальный таймаут 5 с.
+func New(ip, comm string, timeoutSec float64, retries int, debug, oidTiming bool, getBulkMaxRepetitions int) *Client {
 	if timeoutSec <= 0 {
 		timeoutSec = 5
 	}
@@ -242,49 +242,45 @@ func canonicalOID(s string) string {
 
 // ResolveModelID перебирает правила snmp_switch_models: enabled, match_sysobjectid (только строка),
 // match_sysdescr (regex с ignorecase/dotall по умолчанию). Возвращает первый подошедший id или "".
-func ResolveModelID(id DeviceIdentity, rules []map[string]any) string {
+func ResolveModelID(id DeviceIdentity, rules []ModelRule) string {
 	if id.Error != "" {
 		return ""
 	}
 	oid := canonicalOID(id.SysObjectID)
 	for _, r := range rules {
-		if en, ok := r["enabled"].(bool); ok && !en {
+		if !r.Enabled {
 			continue
 		}
-		modelID := strings.TrimSpace(fmt.Sprint(r["id"]))
+		modelID := strings.TrimSpace(r.ID)
 		if modelID == "" {
 			continue
 		}
 		matched := false
-		if roid, ok := r["match_sysobjectid"]; ok {
-			if x, ok := roid.(string); ok && strings.TrimSpace(x) != "" {
-				matched = matched || canonicalOID(x) == oid
-			}
+		if x := strings.TrimSpace(r.MatchSysObjectID); x != "" {
+			matched = matched || canonicalOID(x) == oid
 		}
-		if rs, ok := r["match_sysdescr"]; ok {
-			pat := strings.TrimSpace(fmt.Sprint(rs))
-			if pat != "" {
-				ignoreCase := true
-				if v, ok := r["ignorecase"].(bool); ok {
-					ignoreCase = v
-				}
-				dotAll := true
-				if v, ok := r["match_sysdescr_dotall"].(bool); ok {
-					dotAll = v
-				}
-				prefix := "(?"
-				if ignoreCase {
-					prefix += "i"
-				}
-				if dotAll {
-					prefix += "s"
-				}
-				prefix += ")"
-				// - ignorecase defaults to true
-				// - dotall defaults to true ('.' also matches newlines)
-				if re, err := regexp.Compile(prefix + pat); err == nil && re.MatchString(id.SysDescr) {
-					matched = true
-				}
+		pat := strings.TrimSpace(r.MatchSysDescr)
+		if pat != "" {
+			ignoreCase := true
+			if r.IgnoreCase != nil {
+				ignoreCase = *r.IgnoreCase
+			}
+			dotAll := true
+			if r.MatchSysDescrDotAll != nil {
+				dotAll = *r.MatchSysDescrDotAll
+			}
+			prefix := "(?"
+			if ignoreCase {
+				prefix += "i"
+			}
+			if dotAll {
+				prefix += "s"
+			}
+			prefix += ")"
+			// - ignorecase defaults to true
+			// - dotall defaults to true ('.' also matches newlines)
+			if re, err := regexp.Compile(prefix + pat); err == nil && re.MatchString(id.SysDescr) {
+				matched = true
 			}
 		}
 		if matched {

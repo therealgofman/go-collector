@@ -7,6 +7,16 @@ type DeviceIdentity struct {
 	Error       string
 }
 
+// ModelRule - правило сопоставления устройства с моделью.
+type ModelRule struct {
+	ID                  string `yaml:"id"`
+	Enabled             bool   `yaml:"enabled"`
+	MatchSysObjectID    string `yaml:"match_sysobjectid"`
+	MatchSysDescr       string `yaml:"match_sysdescr"`
+	IgnoreCase          *bool  `yaml:"ignorecase"`
+	MatchSysDescrDotAll *bool  `yaml:"match_sysdescr_dotall"`
+}
+
 // PollResult — единый контейнер результата опроса одного свитча для poll и persist
 // Заполняется только релевантными для режима полями: Interfaces, ArpTable или MacTable.
 type PollResult struct {

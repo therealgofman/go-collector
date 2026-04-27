@@ -4,8 +4,8 @@ package models
 import "go-collector/internal/snmp"
 
 // CreateModel — единственная точка выбора класса по правилам YAML; инициализация полей модели.
-func CreateModel(ip, comm string, rules []map[string]any, debug bool, timeout float64, retries int, oidTiming bool, getBulkMaxRepetitions int) (snmp.Model, snmp.DeviceIdentity, string) {
-	c := snmp.NewClient(ip, comm, timeout, retries, debug, oidTiming, getBulkMaxRepetitions)
+func CreateModel(ip, comm string, rules []snmp.ModelRule, debug bool, timeout float64, retries int, oidTiming bool, getBulkMaxRepetitions int) (snmp.Model, snmp.DeviceIdentity, string) {
+	c := snmp.New(ip, comm, timeout, retries, debug, oidTiming, getBulkMaxRepetitions)
 	id := c.Identity()
 	if id.Error != "" {
 		return nil, id, id.Error

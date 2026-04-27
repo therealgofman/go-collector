@@ -36,7 +36,7 @@ func NewRepository(company *config.CompanyConfig, app *config.AppConfig) (*Repos
 		Company:  company,
 		App:      app,
 		QB:       config.NewQueryBuilder(company, app),
-		Readonly: company.Database["readonly"] == true,
+		Readonly: company.Database.Readonly,
 	}
 	if err := r.TestConnection(); err != nil {
 		return nil, err

@@ -16,40 +16,6 @@ import (
 	"go-collector/internal/snmp"
 )
 
-// toInt безопасно приводит значение из YAML/БД к int; при ошибке возвращает def.
-func toInt(v any, def int) int {
-	if v == nil {
-		return def
-	}
-	if n, err := strconv.Atoi(fmt.Sprint(v)); err == nil {
-		return n
-	}
-	return def
-}
-
-// toFloat приводит значение к float64 (таймауты SNMP из app.yaml).
-func toFloat(v any, def float64) float64 {
-	if v == nil {
-		return def
-	}
-	if n, err := strconv.ParseFloat(fmt.Sprint(v), 64); err == nil {
-		return n
-	}
-	return def
-}
-
-// mapRules преобразует snmp_switch_models из app.yaml ([]any элементов map) в срез правил для snmp.ResolveModelID
-func mapRules(raw any) []map[string]any {
-	arr, _ := raw.([]any)
-	out := make([]map[string]any, 0, len(arr))
-	for _, it := range arr {
-		if m, ok := it.(map[string]any); ok {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 // mapRows — тождественное отображение строк из репозитория (явный тип для читаемости main).
 func mapRows(rows []map[string]any) []map[string]any { return rows }
 
@@ -132,8 +98,8 @@ func main() {
 	}
 	defer repo.Close()
 	persistSvc := persist.New(repo)
-	fmt.Printf("Запуск %s v%s\n", fmt.Sprint(appCfg.AppSection()["name"]), fmt.Sprint(appCfg.AppSection()["version"]))
-	fmt.Printf("Компания: %s\n", fmt.Sprint(companyCfg.Company["name"]))
+	fmt.Printf("Запуск %s v%s\n", appCfg.App.Name, appCfg.App.Version)
+	fmt.Printf("Компания: %s\n", companyCfg.Company.Name)
 	if switchID > 0 {
 		fmt.Printf("Только switch_id=%d (режим одного свитча)\n", switchID)
 	}
@@ -159,30 +125,27 @@ func main() {
 		arpSw = mapRows(rows)
 	}
 
-	rules := mapRules(appCfg.Root["snmp_switch_models"])
+	rules := appCfg.SNMPSwitchModels
 	if len(rules) == 0 {
 		fmt.Println("Внимание: snmp_switch_models в app.yaml пуст — SNMP-опрос не сопоставит ни одного свитча с моделью.")
 	}
-	getBulkRep := toInt(appCfg.Get("app.snmp.getbulk_max_repetitions", nil), 0)
-	if getBulkRep <= 0 {
-		getBulkRep = toInt(appCfg.Get("app.snmp.bulk_max_repetitions", 10), 10) // старое имя ключа
-	}
+	snmpCfg := appCfg.SNMPSettings()
 	opt := poll.Options{
 		Rules:                 rules,
-		Concurrency:           toInt(appCfg.Get("app.snmp.poll_concurrency", 20), 20),
+		Concurrency:           snmpCfg.PollConcurrency,
 		DebugSNMP:             debugSNMP,
-		TimeoutSec:            toFloat(appCfg.Get("app.snmp.timeout_default_s", 5), 5),
-		Retries:               toInt(appCfg.Get("app.snmp.retries", 3), 3),
-		ProgressIntervalS:     toFloat(appCfg.Get("app.snmp.progress_interval_s", 30), 30),
+		TimeoutSec:            snmpCfg.TimeoutDefaultS,
+		Retries:               snmpCfg.Retries,
+		ProgressIntervalS:     snmpCfg.ProgressIntervalS,
 		LogPerSwitch:          debugSNMP,
 		OIDTiming:             snmpOIDTiming,
-		GetBulkMaxRepetitions: getBulkRep,
+		GetBulkMaxRepetitions: snmpCfg.GetBulkMaxRepetitions,
 	}
 	if collectMAC {
-		opt.TimeoutSec = toFloat(appCfg.Get("app.snmp.timeout_mac_s", opt.TimeoutSec), opt.TimeoutSec)
+		opt.TimeoutSec = snmpCfg.TimeoutMACS
 		opt.MacCtxBySID = map[int]*snmp.MacDbContext{}
 		for _, sw := range ifaceSw {
-			id := toInt(sw["d_switch_id"], toInt(sw["switch_id"], 0))
+			id := asInt(sw["d_switch_id"], asInt(sw["switch_id"], 0))
 			if id <= 0 {
 				continue
 			}
