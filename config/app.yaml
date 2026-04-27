@@ -7,6 +7,9 @@ app:
     # GETBULK max-repetitions (поле PDU при BulkWalk; gosnmp по умолчанию 50; 10 ≈ snmpbulkwalk -Cr10).
     getbulk_max_repetitions: 10
     poll_concurrency: 20
+    # Таймаут одного batch SNMP-опроса (сек). По истечении batch прерывается по context.
+    # 0 и меньше — подставится 300 секунд.
+    poll_batch_timeout_s: 300
     # Интервал (сек) вывода «heartbeat» в консоль при длительном опросе (0 и меньше — подставится 30)
     progress_interval_s: 5
     timeout_default_s: 5

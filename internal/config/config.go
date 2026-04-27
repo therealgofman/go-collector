@@ -26,6 +26,7 @@ type AppSNMP struct {
 	GetBulkMaxRepetitions int     `yaml:"getbulk_max_repetitions"`
 	BulkMaxRepetitions    int     `yaml:"bulk_max_repetitions"`
 	PollConcurrency       int     `yaml:"poll_concurrency"`
+	PollBatchTimeoutS     float64 `yaml:"poll_batch_timeout_s"`
 	ProgressIntervalS     float64 `yaml:"progress_interval_s"`
 	TimeoutDefaultS       float64 `yaml:"timeout_default_s"`
 	TimeoutMACS           float64 `yaml:"timeout_mac_s"`
@@ -150,6 +151,9 @@ func (a *AppConfig) SNMPSettings() AppSNMP {
 	}
 	if cfg.ProgressIntervalS <= 0 {
 		cfg.ProgressIntervalS = 30
+	}
+	if cfg.PollBatchTimeoutS <= 0 {
+		cfg.PollBatchTimeoutS = 300
 	}
 	return cfg
 }

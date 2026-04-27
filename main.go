@@ -3,9 +3,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	"go-collector/internal/config"
 	"go-collector/internal/db"
@@ -13,30 +15,6 @@ import (
 	"go-collector/internal/poll"
 	"go-collector/internal/snmp"
 )
-
-func splitSwitchesInBatches(items []snmp.SwitchRow, batchSize int) [][]snmp.SwitchRow {
-	if len(items) == 0 {
-		return [][]snmp.SwitchRow{}
-	}
-	if batchSize <= 0 {
-		return [][]snmp.SwitchRow{items}
-	}
-	out := make([][]snmp.SwitchRow, 0, (len(items)+batchSize-1)/batchSize)
-	for i := 0; i < len(items); i += batchSize {
-		end := i + batchSize
-		if end > len(items) {
-			end = len(items)
-		}
-		out = append(out, items[i:end])
-	}
-	return out
-}
-
-func logWarnings(prefix string, warns []string) {
-	for _, w := range warns {
-		log.Printf("%s: %s", prefix, w)
-	}
-}
 
 // main загружает YAML, открывает БД, собирает репозиторий через DI, при необходимости строит MacDbContext по каждому свитчу,
 // запускает poll.RunBatch для выбранных видов опроса и вызывает persist
@@ -156,7 +134,14 @@ func main() {
 		for i, batch := range batches {
 			// Батчируем, чтобы не держать в памяти результаты по всем свитчам сразу.
 			fmt.Printf("interfaces: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
-			res := poll.RunBatch(batch, "interfaces", opt)
+			res := runBatchWithTimeout(
+				snmpCfg,
+				batch,
+				"interfaces",
+				opt,
+				i,
+				len(batches),
+			)
 			total += len(res)
 			for _, r := range res {
 				if r.Success {
@@ -201,7 +186,14 @@ func main() {
 		batches := splitSwitchesInBatches(arpSw, pollBatchSize)
 		for i, batch := range batches {
 			fmt.Printf("arp: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
-			res := poll.RunBatch(batch, "arp", opt)
+			res := runBatchWithTimeout(
+				snmpCfg,
+				batch,
+				"arp",
+				opt,
+				i,
+				len(batches),
+			)
 			poll.PrintArpPollSummary(res)
 			if dryRun {
 				continue
@@ -252,7 +244,14 @@ func main() {
 					macOpt.MacCtxBySID[sw.ID] = ctx
 				}
 			}
-			res := poll.RunBatch(batch, "mac", macOpt)
+			res := runBatchWithTimeout(
+				snmpCfg,
+				batch,
+				"mac",
+				macOpt,
+				i,
+				len(batches),
+			)
 			poll.PrintMacPollSummary(res)
 			stats, err := persistSvc.PersistMAC(res, dryRun)
 			if err != nil {
@@ -295,4 +294,54 @@ func main() {
 			}
 		}
 	}
+}
+
+func splitSwitchesInBatches(items []snmp.SwitchRow, batchSize int) [][]snmp.SwitchRow {
+	if len(items) == 0 {
+		return [][]snmp.SwitchRow{}
+	}
+	if batchSize <= 0 {
+		return [][]snmp.SwitchRow{items}
+	}
+	out := make([][]snmp.SwitchRow, 0, (len(items)+batchSize-1)/batchSize)
+	for i := 0; i < len(items); i += batchSize {
+		end := i + batchSize
+		if end > len(items) {
+			end = len(items)
+		}
+		out = append(out, items[i:end])
+	}
+	return out
+}
+
+func logWarnings(prefix string, warns []string) {
+	for _, w := range warns {
+		log.Printf("%s: %s", prefix, w)
+	}
+}
+
+func runBatchWithTimeout(
+	snmpCfg config.AppSNMP,
+	batch []snmp.SwitchRow,
+	kind string,
+	opt poll.Options,
+	batchIndex int,
+	batchesTotal int,
+) []snmp.PollResult {
+	batchCtx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(snmpCfg.PollBatchTimeoutS*float64(time.Second)),
+	)
+	defer cancel()
+	res := poll.RunBatch(batchCtx, batch, kind, opt)
+	if batchCtx.Err() == context.DeadlineExceeded {
+		log.Printf(
+			"WARNING: %s batch %d/%d timed out after %.0fs",
+			kind,
+			batchIndex+1,
+			batchesTotal,
+			snmpCfg.PollBatchTimeoutS,
+		)
+	}
+	return res
 }

@@ -2,6 +2,7 @@
 package poll
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"sync"
@@ -96,9 +97,65 @@ func runOne(sw snmp.SwitchRow, kind string, opt Options) snmp.PollResult {
 	return out
 }
 
+func startHeartbeat(label string, total int, interval time.Duration, start time.Time, done, inProgress *atomic.Int64) func() {
+	stop := make(chan struct{})
+	var hbWG sync.WaitGroup
+	hbWG.Go(func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				fmt.Printf(
+					"  ... %s still running: done %d/%d, elapsed %.0fs, in_progress=%d ...\n",
+					label,
+					done.Load(),
+					total,
+					time.Since(start).Seconds(),
+					inProgress.Load(),
+				)
+			}
+		}
+	})
+	return func() {
+		close(stop)
+		hbWG.Wait()
+	}
+}
+
+func startPerSwitchLogger(enabled bool, buffer int) (func(string), func()) {
+	if !enabled {
+		return func(string) {}, func() {}
+	}
+	if buffer <= 0 {
+		buffer = 64
+	}
+	logs := make(chan string, buffer)
+	var logWG sync.WaitGroup
+	logWG.Go(func() {
+		for msg := range logs {
+			fmt.Println(msg)
+		}
+	})
+	logf := func(msg string) {
+		select {
+		case logs <- msg:
+		default:
+			// На большой нагрузке не блокируем workers из-за stdout.
+		}
+	}
+	return logf, func() {
+		close(logs)
+		logWG.Wait()
+	}
+}
+
 // RunBatch обрабатывает все свитчи в пуле воркеров (Concurrency), печатает heartbeat по таймеру,
 // собирает срез PollResult в исходном порядке списка switches.
-func RunBatch(switches []snmp.SwitchRow, kind string, opt Options) []snmp.PollResult {
+// Поддерживает раннюю остановку по context.
+func RunBatch(ctx context.Context, switches []snmp.SwitchRow, kind string, opt Options) []snmp.PollResult {
 	if opt.Concurrency <= 0 {
 		opt.Concurrency = 20
 	}
@@ -118,95 +175,105 @@ func RunBatch(switches []snmp.SwitchRow, kind string, opt Options) []snmp.PollRe
 		opt.ProgressIntervalS,
 	)
 	res := make([]snmp.PollResult, len(switches))
+	for i, sw := range switches {
+		res[i] = snmp.PollResult{
+			SwitchID: sid(sw),
+			IP:       sw.IP,
+			Switch:   sw,
+			Success:  false,
+			Error:    "batch_not_processed",
+		}
+	}
 	var wg sync.WaitGroup
+	var collectWG sync.WaitGroup
 	start := time.Now()
 	var done atomic.Int64
 	var inProgress atomic.Int64
-	stop := make(chan struct{})
-	var hbWG sync.WaitGroup
-	hbWG.Add(1)
-	go func() {
-		defer hbWG.Done()
-		ticker := time.NewTicker(time.Duration(opt.ProgressIntervalS * float64(time.Second)))
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				fmt.Printf(
-					"  ... %s still running: done %d/%d, elapsed %.0fs, in_progress=%d ...\n",
-					label,
-					done.Load(),
-					total,
-					time.Since(start).Seconds(),
-					inProgress.Load(),
-				)
-			}
-		}
-	}()
+	stopHeartbeat := startHeartbeat(
+		label,
+		total,
+		time.Duration(opt.ProgressIntervalS*float64(time.Second)),
+		start,
+		&done,
+		&inProgress,
+	)
+	defer stopHeartbeat()
 	// фиксированный пул воркеров и ограниченная очередь вместо одной goroutine на свитч —
 	// так нагрузка по памяти и сокетам предсказуема при десятках тысяч устройств.
 	type job struct {
 		idx int
 		sw  snmp.SwitchRow
 	}
-	workerCount := opt.Concurrency
-	if workerCount > total {
-		workerCount = total
+	type jobResult struct {
+		idx int
+		res snmp.PollResult
 	}
+	workerCount := min(opt.Concurrency, total)
 	// Небольшая буферизованная очередь: поступление задач и обработка идут параллельно без неограниченного роста очереди.
 	jobs := make(chan job, workerCount*4)
-	for w := 0; w < workerCount; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			processJob := func(j job) {
-				inProgress.Add(1)
-				defer inProgress.Add(-1)
-				swStart := time.Now()
-				if opt.LogPerSwitch {
-					ip := j.sw.IP
-					s := sid(j.sw)
-					fmt.Printf("  -> %s start: switch_id=%s, ip=%s\n", label, s, ip)
+	results := make(chan jobResult, workerCount*4)
+	logf, stopLogger := startPerSwitchLogger(opt.LogPerSwitch, workerCount*8)
+	defer stopLogger()
+	collectWG.Go(func() {
+		for item := range results {
+			res[item.idx] = item.res
+		}
+	})
+	for range workerCount {
+		wg.Go(func() {
+			for j := range jobs {
+				select {
+				case <-ctx.Done():
+					return
+				default:
 				}
-				res[j.idx] = runOne(j.sw, kind, opt)
+				inProgress.Add(1)
+				swStart := time.Now()
+				ip := j.sw.IP
+				s := sid(j.sw)
+				logf(fmt.Sprintf("  -> %s start: switch_id=%s, ip=%s", label, s, ip))
+				out := runOne(j.sw, kind, opt)
 				st := "ok"
-				if !res[j.idx].Success {
+				if !out.Success {
 					st = "fail"
 				}
-				if opt.LogPerSwitch {
-					ip := j.sw.IP
-					s := sid(j.sw)
-					fmt.Printf(
-						"  <- %s done: switch_id=%s, ip=%s, status=%s, elapsed=%.1fs%s\n",
-						label,
-						s,
-						ip,
-						st,
-						time.Since(swStart).Seconds(),
-						func() string {
-							if res[j.idx].Error == "" {
-								return ""
-							}
-							return ", err=" + res[j.idx].Error
-						}(),
-					)
+				logf(fmt.Sprintf(
+					"  <- %s done: switch_id=%s, ip=%s, status=%s, elapsed=%.1fs%s",
+					label,
+					s,
+					ip,
+					st,
+					time.Since(swStart).Seconds(),
+					func() string {
+						if out.Error == "" {
+							return ""
+						}
+						return ", err=" + out.Error
+					}(),
+				))
+				select {
+				case <-ctx.Done():
+					inProgress.Add(-1)
+					return
+				case results <- jobResult{idx: j.idx, res: out}:
 				}
 				done.Add(1)
+				inProgress.Add(-1)
 			}
-			for j := range jobs {
-				processJob(j)
-			}
-		}()
+		})
 	}
+produceLoop:
 	for i, sw := range switches {
-		jobs <- job{idx: i, sw: sw}
+		select {
+		case <-ctx.Done():
+			break produceLoop
+		case jobs <- job{idx: i, sw: sw}:
+		}
 	}
 	close(jobs)
 	wg.Wait()
-	close(stop)
-	hbWG.Wait()
+	close(results)
+	collectWG.Wait()
 	ok := 0
 	for _, r := range res {
 		if r.Success {
