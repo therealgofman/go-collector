@@ -36,16 +36,16 @@ type qBridgeGenericOptions struct {
 	// Если nil, используется дефолт: position = ifIndex - 1.
 	PositionByIfIndex func(ifidx string, w map[string]map[string]string) (int, bool)
 	// PortKey вычисляет ключ порта в выходном map (по умолчанию ifIndex).
-	PortKey func(ifidx string, p map[string]any, w map[string]map[string]string) string
+	PortKey func(ifidx string, p InterfacePort, w map[string]map[string]string) string
 	// PostProcess выполняется после базового merge (например, vendor-specific enrich).
-	PostProcess func(ports map[string]map[string]any, w map[string]map[string]string) error
+	PostProcess func(ports InterfacePorts, w map[string]map[string]string) error
 }
 
 type qBridgeGenericCollector struct {
 	opts qBridgeGenericOptions
 }
 
-func (q *qBridgeGenericCollector) CollectInterfaces(c *Client) (map[string]any, error) {
+func (q *qBridgeGenericCollector) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	return collectInterfacesQBridgeGeneric(c, q.opts)
 }
 
@@ -134,7 +134,7 @@ func NewQBridgeIfaceStaticDefault(allowedIfTypes map[string]struct{}) VendorIfac
 	}
 }
 
-func collectInterfacesQBridgeGeneric(c *Client, opts qBridgeGenericOptions) (map[string]any, error) {
+func collectInterfacesQBridgeGeneric(c *Client, opts qBridgeGenericOptions) (InterfacePorts, error) {
 	w, err := walkMany(c, opts.OIDs, "")
 	if err != nil {
 		return nil, err
@@ -147,7 +147,7 @@ func collectInterfacesQBridgeGeneric(c *Client, opts qBridgeGenericOptions) (map
 		opts.BitmaskBEF,
 	)
 
-	ports := map[string]map[string]any{}
+	ports := InterfacePorts{}
 	for ifidx, typRaw := range w[opts.IfTypeKey] {
 		typ := strings.TrimSpace(typRaw)
 		if len(opts.AllowedIfTypes) > 0 {
@@ -165,17 +165,17 @@ func collectInterfacesQBridgeGeneric(c *Client, opts qBridgeGenericOptions) (map
 				name = v
 			}
 		}
-		p := map[string]any{
-			"vlan":    map[int]int{},
-			"name":    name,
-			"ifindex": n,
+		p := InterfacePort{
+			VLANs:   map[int]int{},
+			Name:    name,
+			IfIndex: n,
 		}
 		if opts.IfAliasKey != "" {
-			p["descr"] = w[opts.IfAliasKey][ifidx]
+			p.Descr = w[opts.IfAliasKey][ifidx]
 		}
 		if opts.IfAdminStatusKey != "" {
 			if strings.TrimSpace(w[opts.IfAdminStatusKey][ifidx]) != "" && strings.TrimSpace(w[opts.IfAdminStatusKey][ifidx]) != "1" {
-				p["disab"] = 1
+				p.Disabled = true
 			}
 		}
 		ports[ifidx] = p
@@ -203,11 +203,12 @@ func collectInterfacesQBridgeGeneric(c *Client, opts qBridgeGenericOptions) (map
 			egress := pos < len(eArr) && eArr[pos] == "1"
 			untag := pos < len(uArr) && uArr[pos] == "1"
 			if egress && !untag {
-				p["tag"] = 1
+				p.Tagged = true
 			}
 			if egress || untag {
-				p["vlan"].(map[int]int)[vid] = 1
+				p.VLANs[vid] = 1
 			}
+			ports[ifidx] = p
 		}
 	}
 
@@ -219,9 +220,9 @@ func collectInterfacesQBridgeGeneric(c *Client, opts qBridgeGenericOptions) (map
 
 	portKeyFn := opts.PortKey
 	if portKeyFn == nil {
-		portKeyFn = func(ifidx string, _ map[string]any, _ map[string]map[string]string) string { return ifidx }
+		portKeyFn = func(ifidx string, _ InterfacePort, _ map[string]map[string]string) string { return ifidx }
 	}
-	out := map[string]any{}
+	out := InterfacePorts{}
 	for ifidx, p := range ports {
 		k := portKeyFn(ifidx, p, w)
 		if strings.TrimSpace(k) == "" {

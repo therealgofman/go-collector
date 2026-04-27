@@ -10,7 +10,7 @@ type Device struct {
 	macCollect   snmp.VendorMACCollector
 }
 
-func (m *Device) CollectInterfaces() (map[string]any, error) {
+func (m *Device) CollectInterfaces() (snmp.InterfacePorts, error) {
 	return m.ifaceCollect.CollectInterfaces(m.client)
 }
 
@@ -27,6 +27,6 @@ func (m *Device) IsArpNoop() bool {
 	return ok && v.IsNoop()
 }
 
-func (m *Device) CollectMAC(ctx *snmp.MacDbContext) (map[string]any, error) {
+func (m *Device) CollectMAC(ctx *snmp.MacDbContext) (snmp.MACTable, error) {
 	return m.macCollect.CollectMAC(m.client, ctx)
 }

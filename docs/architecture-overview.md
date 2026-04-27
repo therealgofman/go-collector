@@ -13,7 +13,7 @@
 
 1. По устройству выбирается модель в `internal/snmp/models/factory.go`.
 2. Модель предоставляет collector-ы (например, по интерфейсам/VLAN).
-3. Collector возвращает transport-like структуру портов (`map[string]any`).
+3. Collector возвращает типизированные порты (`snmp.InterfacePorts`).
 4. Опциональные enricher-ы добавляют поля и persist-операции в порты.
 5. Persist-слой в `internal/db`:
    - upsert базовых данных порта,
@@ -53,13 +53,13 @@ Persist-слой универсален и не "знает" про конкре
 
 Базовый контракт порта:
 
-- `ifindex`
-- `name`
-- `descr`
-- `tag`
-- `disab`
-- `vlan`
-- `persist` (опционально)
+- `InterfacePort.IfIndex`
+- `InterfacePort.Name`
+- `InterfacePort.Descr`
+- `InterfacePort.Tagged`
+- `InterfacePort.Disabled`
+- `InterfacePort.VLANs`
+- `InterfacePort.Persist` (опционально)
 
 Важно сохранять обратную совместимость этого контракта, так как на него опираются enricher-ы и persist.
 
@@ -67,9 +67,19 @@ Persist-слой универсален и не "знает" про конкре
 
 - **Новый вендор/модель:** добавить collector в `internal/snmp`, зарегистрировать в factory.
 - **Новая enrichment-фича:** добавить enricher, регистрировать через `NewIfaceCollectorWithEnrich`.
-- **Новая запись в БД:** объявить named-query в `config/companies/<company>.yaml`, добавлять persist-op через `AddPortPersistOp`.
+- **Новая запись в БД:** объявить named-query в `config/companies/<company>.yaml`, добавлять `PortPersistOp` в `InterfacePort.Persist`.
 
-## 8) Связанные документы
+## 8) Масштабирование опроса
+
+Для больших инвентарей (десятки/сотни тысяч устройств) `main` поддерживает батчевый режим:
+
+- флаг `-poll-batch-size` управляет размером батча;
+- SNMP-опрос и persist выполняются по батчам;
+- для MAC DB-контекст строится только для текущего батча.
+
+Это снижает пик памяти и делает нагрузку на БД более предсказуемой.
+
+## 9) Связанные документы
 
 - Поток enrich/persist: `docs/interface-enrichment-flow.md`
 - YAML, шаблоны, named queries: `docs/yaml-templates-and-queries.md`

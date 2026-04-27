@@ -18,7 +18,7 @@ func NewIfaceCollectorWithEnrich(base VendorIfaceCollector, enrichers ...VendorI
 	return &ifaceCollectorWithEnrich{base: base, enrichers: enrichers}
 }
 
-func (w *ifaceCollectorWithEnrich) CollectInterfaces(c *Client) (map[string]any, error) {
+func (w *ifaceCollectorWithEnrich) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	ports, err := w.base.CollectInterfaces(c)
 	if err != nil {
 		return nil, err

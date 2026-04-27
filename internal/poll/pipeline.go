@@ -4,7 +4,6 @@ package poll
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,42 +27,33 @@ type Options struct {
 }
 
 // sid извлекает идентификатор свитча из строки БД (d_switch_id либо switch_id либо ip).
-func sid(sw map[string]any) any {
-	if v, ok := sw["d_switch_id"]; ok {
-		return v
+func sid(sw snmp.SwitchRow) string {
+	if sw.ID > 0 {
+		return strconv.Itoa(sw.ID)
 	}
-	if v, ok := sw["switch_id"]; ok {
-		return v
+	if sw.IP != "" {
+		return sw.IP
 	}
-	return sw["ip"]
-}
-
-// ipComm возвращает очищенные IP и SNMP community строки.
-func ipComm(sw map[string]any) (string, string) {
-	clean := func(s string) string {
-		s = strings.ReplaceAll(s, "\x00", "")
-		return strings.TrimSpace(s)
-	}
-	return clean(fmt.Sprint(sw["ip"])), clean(fmt.Sprint(sw["comm"]))
+	return "unknown"
 }
 
 // runOne выполняет один полный цикл для свитча: CreateModel, затем CollectInterfaces / CollectARP / CollectMAC
 // в зависимости от kind; для MAC подставляет MacDbContext из opt.MacCtxBySID.
-func runOne(sw map[string]any, kind string, opt Options) snmp.PollResult {
-	ip, comm := ipComm(sw)
+func runOne(sw snmp.SwitchRow, kind string, opt Options) snmp.PollResult {
+	ip, comm := sw.IP, sw.Comm
 	idv := sid(sw)
 	if ip == "" || comm == "" {
-		return snmp.PollResult{SwitchID: idv, IP: ip, Success: false, Error: "missing_ip_or_comm", RawSwitch: sw}
+		return snmp.PollResult{SwitchID: idv, IP: ip, Success: false, Error: "missing_ip_or_comm", Switch: sw}
 	}
 	model, ident, errMsg := snmpmodels.CreateModel(ip, comm, opt.Rules, opt.DebugSNMP, opt.TimeoutSec, opt.Retries, opt.OIDTiming, opt.GetBulkMaxRepetitions)
 	if errMsg != "" {
 		return snmp.PollResult{
-			SwitchID: idv, IP: ip, Success: false, Error: errMsg, RawSwitch: sw,
+			SwitchID: idv, IP: ip, Success: false, Error: errMsg, Switch: sw,
 			SysDescr: ident.SysDescr, SysObjectID: ident.SysObjectID,
 		}
 	}
 	out := snmp.PollResult{
-		SwitchID: idv, IP: ip, Success: true, RawSwitch: sw,
+		SwitchID: idv, IP: ip, Success: true, Switch: sw,
 		SysDescr: ident.SysDescr, SysObjectID: ident.SysObjectID,
 	}
 	switch kind {
@@ -91,7 +81,7 @@ func runOne(sw map[string]any, kind string, opt Options) snmp.PollResult {
 		}
 	case "mac":
 		var ctx *snmp.MacDbContext
-		s, _ := strconv.Atoi(fmt.Sprint(idv))
+		s := sw.ID
 		if s > 0 && opt.MacCtxBySID != nil {
 			ctx = opt.MacCtxBySID[s]
 		}
@@ -108,7 +98,7 @@ func runOne(sw map[string]any, kind string, opt Options) snmp.PollResult {
 
 // RunBatch обрабатывает все свитчи в пуле воркеров (Concurrency), печатает heartbeat по таймеру,
 // собирает срез PollResult в исходном порядке списка switches.
-func RunBatch(switches []map[string]any, kind string, opt Options) []snmp.PollResult {
+func RunBatch(switches []snmp.SwitchRow, kind string, opt Options) []snmp.PollResult {
 	if opt.Concurrency <= 0 {
 		opt.Concurrency = 20
 	}
@@ -159,7 +149,7 @@ func RunBatch(switches []map[string]any, kind string, opt Options) []snmp.PollRe
 	// так нагрузка по памяти и сокетам предсказуема при десятках тысяч устройств.
 	type job struct {
 		idx int
-		sw  map[string]any
+		sw  snmp.SwitchRow
 	}
 	workerCount := opt.Concurrency
 	if workerCount > total {
@@ -171,12 +161,13 @@ func RunBatch(switches []map[string]any, kind string, opt Options) []snmp.PollRe
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := range jobs {
+			processJob := func(j job) {
 				inProgress.Add(1)
+				defer inProgress.Add(-1)
 				swStart := time.Now()
 				if opt.LogPerSwitch {
-					ip := fmt.Sprint(j.sw["ip"])
-					s := fmt.Sprint(sid(j.sw))
+					ip := j.sw.IP
+					s := sid(j.sw)
 					fmt.Printf("  -> %s start: switch_id=%s, ip=%s\n", label, s, ip)
 				}
 				res[j.idx] = runOne(j.sw, kind, opt)
@@ -185,8 +176,8 @@ func RunBatch(switches []map[string]any, kind string, opt Options) []snmp.PollRe
 					st = "fail"
 				}
 				if opt.LogPerSwitch {
-					ip := fmt.Sprint(j.sw["ip"])
-					s := fmt.Sprint(sid(j.sw))
+					ip := j.sw.IP
+					s := sid(j.sw)
 					fmt.Printf(
 						"  <- %s done: switch_id=%s, ip=%s, status=%s, elapsed=%.1fs%s\n",
 						label,
@@ -203,7 +194,9 @@ func RunBatch(switches []map[string]any, kind string, opt Options) []snmp.PollRe
 					)
 				}
 				done.Add(1)
-				inProgress.Add(-1)
+			}
+			for j := range jobs {
+				processJob(j)
 			}
 		}()
 	}

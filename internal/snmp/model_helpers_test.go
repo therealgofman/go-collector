@@ -107,16 +107,16 @@ func TestParseJuniperBridgePortList(t *testing.T) {
 }
 
 func TestApplyJuniperStaticEgressVLANs(t *testing.T) {
-	ports := map[string]map[string]any{
-		"10": {"vlan": map[int]int{}},
+	ports := InterfacePorts{
+		"10": {VLANs: map[int]int{}},
 	}
 	applyJuniperStaticEgressVLANs(ports, map[string]map[int]struct{}{
 		"10": {100: {}, 200: {}},
 	})
-	if ports["10"]["tag"] != 1 {
+	if !ports["10"].Tagged {
 		t.Fatalf("tag flag not set")
 	}
-	gotVLAN := ports["10"]["vlan"].(map[int]int)
+	gotVLAN := ports["10"].VLANs
 	wantVLAN := map[int]int{100: 1, 200: 1}
 	if !reflect.DeepEqual(gotVLAN, wantVLAN) {
 		t.Fatalf("vlan map mismatch: got=%v want=%v", gotVLAN, wantVLAN)
@@ -169,29 +169,6 @@ func TestDecodeCiscoVRFNameFromOIDPrefix(t *testing.T) {
 	}
 }
 
-func TestAddPortPersistOp(t *testing.T) {
-	port := map[string]any{}
-	AddPortPersistOp(port, "upsert_x", map[string]any{"a": 1})
-	gotArr, ok := port["persist"].([]any)
-	if !ok || len(gotArr) != 1 {
-		t.Fatalf("expected persist []any with 1 item, got %#v", port["persist"])
-	}
-
-	port2 := map[string]any{"persist": map[string]any{}}
-	AddPortPersistOp(port2, "upsert_x", map[string]any{"a": 2})
-	gotMap := port2["persist"].(map[string]any)
-	if _, ok := gotMap["upsert_x"]; !ok {
-		t.Fatalf("expected map persist to contain query key")
-	}
-
-	port3 := map[string]any{"persist": []any{map[string]any{"query": "q1", "params": map[string]any{"v": 1}}}}
-	AddPortPersistOp(port3, "q1", map[string]any{"v": 2})
-	got3 := port3["persist"].([]any)[0].(map[string]any)["params"].(map[string]any)["v"]
-	if got3 != 2 {
-		t.Fatalf("expected existing op params replaced, got %v", got3)
-	}
-}
-
 func TestDLinkHelpers(t *testing.T) {
 	if dlink1210MIBSuffixByType(11) != "75.14.1" {
 		t.Fatalf("unexpected suffix for typ=11")
@@ -208,15 +185,15 @@ func TestDLinkHelpers(t *testing.T) {
 		map[int][]string{100: {"1", "0"}},
 		nil,
 	)
-	if ports["2"]["tag"] != 1 {
+	if !ports["2"].Tagged {
 		t.Fatalf("expected port2 to be tagged")
 	}
-	if ports["2"]["disab"] != 1 {
+	if !ports["2"].Disabled {
 		t.Fatalf("expected port2 disabled flag")
 	}
 
 	dlinkApplyMaskVLANsToPorts(ports, map[string]string{"200": "\x80"})
-	if ports["1"]["vlan"].(map[int]int)[200] != 1 {
+	if ports["1"].VLANs[200] != 1 {
 		t.Fatalf("expected vlan 200 added from mask")
 	}
 }
@@ -234,11 +211,11 @@ func TestFormatExtremeMAC(t *testing.T) {
 }
 
 type testBaseCollector struct {
-	ret map[string]any
+	ret InterfacePorts
 	err error
 }
 
-func (b testBaseCollector) CollectInterfaces(*Client) (map[string]any, error) {
+func (b testBaseCollector) CollectInterfaces(*Client) (InterfacePorts, error) {
 	return b.ret, b.err
 }
 
@@ -246,11 +223,11 @@ type testEnricher struct {
 	err error
 }
 
-func (e testEnricher) EnrichInterfaces(_ *Client, ports map[string]any) error {
+func (e testEnricher) EnrichInterfaces(_ *Client, ports InterfacePorts) error {
 	if e.err != nil {
 		return e.err
 	}
-	ports["enriched"] = true
+	ports["enriched"] = InterfacePort{Name: "enriched"}
 	return nil
 }
 
@@ -259,13 +236,13 @@ func TestIfaceCollectorWithEnrich(t *testing.T) {
 		t.Fatalf("nil base should produce nil wrapper")
 	}
 
-	base := testBaseCollector{ret: map[string]any{"1": "ok"}}
+	base := testBaseCollector{ret: InterfacePorts{"1": {Name: "ok"}}}
 	wrapped := NewIfaceCollectorWithEnrich(base, testEnricher{})
 	out, err := wrapped.CollectInterfaces(&Client{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out["enriched"] != true {
+	if _, ok := out["enriched"]; !ok {
 		t.Fatalf("expected enriched marker in output")
 	}
 

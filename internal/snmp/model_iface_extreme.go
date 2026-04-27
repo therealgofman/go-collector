@@ -1,7 +1,6 @@
 package snmp
 
 import (
-	"go-collector/internal/helpers"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,11 +14,11 @@ type extremeXSeriesIface struct{}
 func NewExtremeIface(typ int) VendorIfaceCollector { return &extremeIface{typ: typ} }
 func NewExtremeXSeriesIface() VendorIfaceCollector { return &extremeXSeriesIface{} }
 
-func (*extremeXSeriesIface) CollectInterfaces(c *Client) (map[string]any, error) {
+func (*extremeXSeriesIface) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	return (&extremeIface{typ: 3}).CollectInterfaces(c)
 }
 
-func (e *extremeIface) CollectInterfaces(c *Client) (map[string]any, error) {
+func (e *extremeIface) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	vlansOID := "1.3.6.1.4.1.1916.1.2.3.1.1.3"
 	if e.typ == 3 {
 		vlansOID = "1.3.6.1.4.1.1916.1.2.1.2.1.10"
@@ -82,7 +81,7 @@ func (e *extremeIface) CollectInterfaces(c *Client) (map[string]any, error) {
 		bridgePortByIfIndex[ifIndex] = bridgePort
 	}
 
-	ports := map[string]map[string]any{}
+	ports := InterfacePorts{}
 	for ifidxS, ifname := range w["ifName"] {
 		ifType := strings.TrimSpace(w["ifType"][ifidxS])
 		if _, ok := qBridgeIfTypesL2Basic[ifType]; !ok {
@@ -92,23 +91,23 @@ func (e *extremeIface) CollectInterfaces(c *Client) (map[string]any, error) {
 		if err != nil || ifidx <= 0 {
 			continue
 		}
-		p := map[string]any{
-			"name":    ifname,
-			"ifindex": ifidx,
-			"vlan":    map[int]int{},
-			"descr":   w["ifAlias"][ifidxS],
+		p := InterfacePort{
+			Name:    ifname,
+			IfIndex: ifidx,
+			VLANs:   map[int]int{},
+			Descr:   w["ifAlias"][ifidxS],
 		}
 		if strings.TrimSpace(w["ifAdminStatus"][ifidxS]) == "2" {
-			p["disab"] = 1
+			p.Disabled = true
 		}
 		ports[ifname] = p
 	}
 
 	for vid, eArr := range ve {
 		uArr := vu[vid]
-		for _, p := range ports {
-			ifidx, ok := helpers.AsInt(p["ifindex"])
-			if !ok {
+		for key, p := range ports {
+			ifidx := p.IfIndex
+			if ifidx <= 0 {
 				continue
 			}
 			bridgePort, ok := bridgePortByIfIndex[ifidx]
@@ -119,13 +118,14 @@ func (e *extremeIface) CollectInterfaces(c *Client) (map[string]any, error) {
 			egress := pos < len(eArr) && eArr[pos] == "1"
 			untag := pos < len(uArr) && uArr[pos] == "1"
 			if egress && !untag {
-				p["tag"] = 1
+				p.Tagged = true
 			}
 			if egress || untag {
-				p["vlan"].(map[int]int)[vid] = 1
+				p.VLANs[vid] = 1
 			}
+			ports[key] = p
 		}
 	}
 
-	return helpers.PortsToAnyMap(ports), nil
+	return ports, nil
 }

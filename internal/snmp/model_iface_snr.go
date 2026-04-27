@@ -1,7 +1,6 @@
 package snmp
 
 import (
-	"go-collector/internal/helpers"
 	"strconv"
 	"strings"
 )
@@ -14,11 +13,11 @@ type snrIfaceQBridge struct{}
 func NewSNRIface() VendorIfaceCollector        { return &snrIface{} }
 func NewSNRIfaceQBridge() VendorIfaceCollector { return &snrIfaceQBridge{} }
 
-func (*snrIfaceQBridge) CollectInterfaces(c *Client) (map[string]any, error) {
+func (*snrIfaceQBridge) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	return NewQBridgeIfaceCurrentDefault(QBridgeIfTypesL2StackLike()).CollectInterfaces(c)
 }
 
-func (*snrIface) CollectInterfaces(c *Client) (map[string]any, error) {
+func (*snrIface) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	w, err := walkMany(c, map[string]string{
 		"ifName":     "1.3.6.1.4.1.40418.7.100.3.2.1.2",
 		"ifAlias":    "1.3.6.1.2.1.31.1.1.1.18",
@@ -41,16 +40,16 @@ func (*snrIface) CollectInterfaces(c *Client) (map[string]any, error) {
 		pvidISM[parts[1]] = strings.TrimSpace(parts[0])
 	}
 
-	ports := map[string]map[string]any{}
+	ports := InterfacePorts{}
 	for ifidx, name := range w["ifName"] {
 		n, _ := strconv.Atoi(ifidx)
-		p := map[string]any{
-			"ifindex": n,
-			"vlan":    map[int]int{},
-			"name":    name,
+		p := InterfacePort{
+			IfIndex: n,
+			VLANs:   map[int]int{},
+			Name:    name,
 		}
 		if ifAlias, ok := w["ifAlias"][ifidx]; ok {
-			p["descr"] = ifAlias
+			p.Descr = ifAlias
 		}
 		ports[ifidx] = p
 	}
@@ -75,11 +74,15 @@ func (*snrIface) CollectInterfaces(c *Client) (map[string]any, error) {
 		if _, existsInVS := w["vs"][pvidS]; !existsInVS && strings.TrimSpace(w["portMode"][ifi]) != "2" {
 			continue
 		}
-		ports[ifi]["vlan"].(map[int]int)[vid] = 1
+		p := ports[ifi]
+		p.VLANs[vid] = 1
+		ports[ifi] = p
 
 		if ismVID, ok := pvidISM[ifi]; ok {
 			if ism, err := strconv.Atoi(strings.TrimSpace(ismVID)); err == nil && ism > 0 {
-				ports[ifi]["vlan"].(map[int]int)[ism] = 1
+				p := ports[ifi]
+				p.VLANs[ism] = 1
+				ports[ifi] = p
 			}
 		}
 	}
@@ -108,11 +111,12 @@ func (*snrIface) CollectInterfaces(c *Client) (map[string]any, error) {
 				}
 			}
 			if includeVID {
-				p["tag"] = 1
-				p["vlan"].(map[int]int)[vid] = 1
+				p.Tagged = true
+				p.VLANs[vid] = 1
+				ports[ifi] = p
 			}
 		}
 	}
 
-	return helpers.PortsToAnyMap(ports), nil
+	return ports, nil
 }

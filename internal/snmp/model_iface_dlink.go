@@ -1,7 +1,6 @@
 package snmp
 
 import (
-	"go-collector/internal/helpers"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,7 +43,7 @@ func dlink1210MIBSuffixByType(typ int) string {
 	return m[0]
 }
 
-func (d *dlinkIface1210) CollectInterfaces(c *Client) (map[string]any, error) {
+func (d *dlinkIface1210) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	prefix := "1.3.6.1.4.1.171.10." + dlink1210MIBSuffixByType(d.typ)
 	w, err := walkMany(c, map[string]string{
 		"ifType": "1.3.6.1.2.1.2.2.1.3",
@@ -58,16 +57,16 @@ func (d *dlinkIface1210) CollectInterfaces(c *Client) (map[string]any, error) {
 		return nil, err
 	}
 
-	ports := map[string]map[string]any{}
+	ports := InterfacePorts{}
 	for ifidx, typ := range w["ifType"] {
 		if strings.TrimSpace(typ) != "6" {
 			continue
 		}
 		n, _ := strconv.Atoi(ifidx)
-		p := map[string]any{"vlan": map[int]int{}, "name": ifidx, "ifindex": n}
+		p := InterfacePort{VLANs: map[int]int{}, Name: ifidx, IfIndex: n}
 		for _, unit := range []string{"100", "101", "102"} {
 			if desc := strings.TrimSpace(w["ifName"][ifidx+"."+unit]); desc != "" {
-				p["descr"] = desc
+				p.Descr = desc
 			}
 		}
 		ports[ifidx] = p
@@ -89,11 +88,12 @@ func (d *dlinkIface1210) CollectInterfaces(c *Client) (map[string]any, error) {
 			egress := pos < len(eArr) && eArr[pos] == "1"
 			untag := pos < len(uArr) && uArr[pos] == "1"
 			if egress && !untag {
-				p["tag"] = 1
+				p.Tagged = true
 			}
 			if egress || untag {
-				p["vlan"].(map[int]int)[vid] = 1
+				p.VLANs[vid] = 1
 			}
+			ports[ifidx] = p
 		}
 	}
 	for vidS, raw := range w["ism"] {
@@ -111,17 +111,18 @@ func (d *dlinkIface1210) CollectInterfaces(c *Client) (map[string]any, error) {
 			if !ok {
 				continue
 			}
-			if _, tagged := p["tag"]; tagged {
+			if p.Tagged {
 				continue
 			}
-			p["vlan"].(map[int]int)[vid] = 1
+			p.VLANs[vid] = 1
+			ports[ifidx] = p
 		}
 	}
-	return helpers.PortsToAnyMap(ports), nil
+	return ports, nil
 }
 
 // CollectInterfaces (с опциональными enrich_3120_*)
-func (d *dlinkIface3100) CollectInterfaces(c *Client) (map[string]any, error) {
+func (d *dlinkIface3100) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	w, err := walkMany(c, mergeIfaceOIDMaps(
 		ifaceQBridgeCurrentOIDs,
 		map[string]string{
@@ -141,10 +142,10 @@ func (d *dlinkIface3100) CollectInterfaces(c *Client) (map[string]any, error) {
 	if err := d.collectWithEnrich(c, ports); err != nil {
 		return nil, err
 	}
-	return helpers.PortsToAnyMap(ports), nil
+	return ports, nil
 }
 
-func (d *dlinkIface3100) collectWithEnrich(c *Client, ports map[string]map[string]any) error {
+func (d *dlinkIface3100) collectWithEnrich(c *Client, ports InterfacePorts) error {
 	if d.enrich3120Portnames {
 		next, changed, err := dlinkEnrich3120Portnames(c, ports)
 		if err != nil {
@@ -165,7 +166,7 @@ func (d *dlinkIface3100) collectWithEnrich(c *Client, ports map[string]map[strin
 	return nil
 }
 
-func (*dlinkIface3028) CollectInterfaces(c *Client) (map[string]any, error) {
+func (*dlinkIface3028) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	opts := qBridgeDefaultStaticOptions(
 		map[string]string{
 			"sysDescr": "1.3.6.1.2.1.1.1",
@@ -173,7 +174,7 @@ func (*dlinkIface3028) CollectInterfaces(c *Client) (map[string]any, error) {
 		qBridgeIfTypesL2Basic,
 	)
 	opts.IfNameKey = ""
-	opts.PostProcess = func(ports map[string]map[string]any, w map[string]map[string]string) error {
+	opts.PostProcess = func(ports InterfacePorts, w map[string]map[string]string) error {
 		mctOID := "1.3.6.1.4.1.171.11.116.2.2.7.8.1.3"
 		mcuOID := "1.3.6.1.4.1.171.11.116.2.2.7.8.1.4"
 		if strings.TrimSpace(w["sysDescr"]["0"]) == "DES-1210-52/ME/C1" {
@@ -195,7 +196,7 @@ func (*dlinkIface3028) CollectInterfaces(c *Client) (map[string]any, error) {
 	return collectInterfacesQBridgeGeneric(c, opts)
 }
 
-func (d *dlinkIface2108) CollectInterfaces(c *Client) (map[string]any, error) {
+func (d *dlinkIface2108) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	mib := "2"
 	if d.newMIB {
 		mib = "3"
@@ -221,10 +222,10 @@ func (d *dlinkIface2108) CollectInterfaces(c *Client) (map[string]any, error) {
 		pu[vid] = bitmaskToArray(w["untagged"][vidS])
 	}
 	ports := dlinkMergePortsFromMasks(w["ifName"], nil, w["ifAdminStat"], pe, pu, func(_, _ string) bool { return true })
-	return helpers.PortsToAnyMap(ports), nil
+	return ports, nil
 }
 
-func (*dlinkIface1100) CollectInterfaces(c *Client) (map[string]any, error) {
+func (*dlinkIface1100) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	w, err := walkMany(c, map[string]string{
 		"ifAlias":      "1.3.6.1.2.1.31.1.1.1.18",
 		"ifOperStatus": "1.3.6.1.2.1.2.2.1.8",
@@ -241,7 +242,7 @@ func (*dlinkIface1100) CollectInterfaces(c *Client) (map[string]any, error) {
 	ports := dlinkMergePortsFromMasks(w["ifOperStatus"], w["ifAlias"], w["ifAdminStat"], pe, pu, func(ifidx, oper string) bool {
 		return strings.TrimSpace(oper) != "6" && strings.TrimSpace(w["ifType"][ifidx]) == "6"
 	})
-	return helpers.PortsToAnyMap(ports), nil
+	return ports, nil
 }
 
 func dlinkMergePortsFromMasks(
@@ -251,23 +252,23 @@ func dlinkMergePortsFromMasks(
 	pe map[int][]string,
 	pu map[int][]string,
 	keep func(ifidx, ifiVal string) bool,
-) map[string]map[string]any {
-	ports := map[string]map[string]any{}
+) InterfacePorts {
+	ports := InterfacePorts{}
 	for ifidx, ifiVal := range ifi {
 		if keep != nil && !keep(ifidx, ifiVal) {
 			continue
 		}
 		n, _ := strconv.Atoi(ifidx)
-		p := map[string]any{
-			"vlan":    map[int]int{},
-			"name":    ifidx,
-			"ifindex": n,
+		p := InterfacePort{
+			VLANs:   map[int]int{},
+			Name:    ifidx,
+			IfIndex: n,
 		}
 		if ifa != nil {
-			p["descr"] = ifa[ifidx]
+			p.Descr = ifa[ifidx]
 		}
 		if ifd != nil && strings.TrimSpace(ifd[ifidx]) != "" && strings.TrimSpace(ifd[ifidx]) != "1" {
-			p["disab"] = 1
+			p.Disabled = true
 		}
 		ports[ifidx] = p
 	}
@@ -282,11 +283,12 @@ func dlinkMergePortsFromMasks(
 			egress := pos < len(eArr) && eArr[pos] == "1"
 			untag := pos < len(uArr) && uArr[pos] == "1"
 			if egress && !untag {
-				p["tag"] = 1
+				p.Tagged = true
 			}
 			if egress || untag {
-				p["vlan"].(map[int]int)[vid] = 1
+				p.VLANs[vid] = 1
 			}
+			ports[ifidx] = p
 		}
 	}
 	return ports
@@ -331,7 +333,7 @@ func dlinkDGS1100VLANTables(c *Client) (map[int][]string, map[int][]string, erro
 	return pe, pu, nil
 }
 
-func dlinkApplyMaskVLANsToPorts(ports map[string]map[string]any, m map[string]string) {
+func dlinkApplyMaskVLANsToPorts(ports InterfacePorts, m map[string]string) {
 	for vidS, raw := range m {
 		vid, err := strconv.Atoi(strings.TrimSpace(vidS))
 		if err != nil || vid <= 0 {
@@ -343,21 +345,22 @@ func dlinkApplyMaskVLANsToPorts(ports map[string]map[string]any, m map[string]st
 			}
 			ifidx := strconv.Itoa(i + 1)
 			if p, ok := ports[ifidx]; ok {
-				p["vlan"].(map[int]int)[vid] = 1
+				p.VLANs[vid] = 1
+				ports[ifidx] = p
 			}
 		}
 	}
 }
 
 // enrich_3120_portnames: переименование ключей в формат "unit/port", если в стеке есть unit != 1.
-func dlinkEnrich3120Portnames(c *Client, ports map[string]map[string]any) (map[string]map[string]any, bool, error) {
+func dlinkEnrich3120Portnames(c *Client, ports InterfacePorts) (InterfacePorts, bool, error) {
 	ifd, err := c.Walk("1.3.6.1.2.1.2.2.1.2", "")
 	if err != nil {
 		return nil, false, err
 	}
 	re := regexp.MustCompile(`Port (\d+) on Unit (\d+)`)
 	haveUnits := false
-	out := map[string]map[string]any{}
+	out := InterfacePorts{}
 	for ifi, p := range ports {
 		pname := ifi
 		if d, ok := ifd[ifi]; ok {
@@ -368,11 +371,8 @@ func dlinkEnrich3120Portnames(c *Client, ports map[string]map[string]any) (map[s
 				}
 			}
 		}
-		cp := map[string]any{}
-		for k, v := range p {
-			cp[k] = v
-		}
-		cp["name"] = pname
+		cp := p
+		cp.Name = pname
 		out[pname] = cp
 	}
 	if !haveUnits {
@@ -382,7 +382,7 @@ func dlinkEnrich3120Portnames(c *Client, ports map[string]map[string]any) (map[s
 }
 
 // enrich_3120_ism: добавление VLAN из ism-маски к портам по полю ifindex.
-func dlinkEnrich3120ISM(c *Client, ports map[string]map[string]any) error {
+func dlinkEnrich3120ISM(c *Client, ports InterfacePorts) error {
 	ism, err := c.Walk("1.3.6.1.4.1.171.12.64.3.1.1.4", "")
 	if err != nil {
 		return err
@@ -393,15 +393,16 @@ func dlinkEnrich3120ISM(c *Client, ports map[string]map[string]any) error {
 			continue
 		}
 		mask := bitmaskToArray(raw)
-		for _, p := range ports {
-			ifidx, ok := helpers.AsInt(p["ifindex"])
-			if !ok {
+		for key, p := range ports {
+			ifidx := p.IfIndex
+			if ifidx <= 0 {
 				continue
 			}
 			if ifidx <= 0 || ifidx > len(mask) || mask[ifidx-1] != "1" {
 				continue
 			}
-			p["vlan"].(map[int]int)[vid] = 1
+			p.VLANs[vid] = 1
+			ports[key] = p
 		}
 	}
 	return nil

@@ -25,8 +25,8 @@ func TestCiscoIfaceL2CollectInterfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CollectInterfaces error: %v", err)
 	}
-	p := got["10"].(map[string]any)
-	assertDeepEqual(t, "cisco l2 port10 vlan", p["vlan"], map[int]int{100: 1})
+	p := got["10"]
+	assertDeepEqual(t, "cisco l2 port10 vlan", p.VLANs, map[int]int{100: 1})
 }
 
 func TestSNRIfaceCollectInterfaces(t *testing.T) {
@@ -43,9 +43,9 @@ func TestSNRIfaceCollectInterfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CollectInterfaces error: %v", err)
 	}
-	p := got["1"].(map[string]any)
-	assertDeepEqual(t, "snr vlan", p["vlan"], map[int]int{100: 1, 200: 1, 300: 1})
-	assertDeepEqual(t, "snr tag", p["tag"], 1)
+	p := got["1"]
+	assertDeepEqual(t, "snr vlan", p.VLANs, map[int]int{100: 1, 200: 1, 300: 1})
+	assertDeepEqual(t, "snr tag", p.Tagged, true)
 }
 
 func TestHPEIfaceQBridgeStaticCollectInterfaces(t *testing.T) {
@@ -65,9 +65,9 @@ func TestHPEIfaceQBridgeStaticCollectInterfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CollectInterfaces error: %v", err)
 	}
-	p := got["10"].(map[string]any)
-	assertDeepEqual(t, "hpe vlan", p["vlan"], map[int]int{100: 1})
-	assertDeepEqual(t, "hpe tag", p["tag"], 1)
+	p := got["10"]
+	assertDeepEqual(t, "hpe vlan", p.VLANs, map[int]int{100: 1})
+	assertDeepEqual(t, "hpe tag", p.Tagged, true)
 }
 
 func TestExtremeIfaceCollectInterfaces(t *testing.T) {
@@ -85,9 +85,9 @@ func TestExtremeIfaceCollectInterfaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CollectInterfaces error: %v", err)
 	}
-	p := got["xe-1"].(map[string]any)
-	assertDeepEqual(t, "extreme vlan", p["vlan"], map[int]int{200: 1})
-	assertDeepEqual(t, "extreme tag", p["tag"], 1)
+	p := got["xe-1"]
+	assertDeepEqual(t, "extreme vlan", p.VLANs, map[int]int{200: 1})
+	assertDeepEqual(t, "extreme tag", p.Tagged, true)
 }
 
 func TestDLinkCollectorsCollectInterfaces(t *testing.T) {
@@ -104,7 +104,7 @@ func TestDLinkCollectorsCollectInterfaces(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		assertDeepEqual(t, "dlink1210 vlan", got["1"].(map[string]any)["vlan"], map[int]int{100: 1})
+		assertDeepEqual(t, "dlink1210 vlan", got["1"].VLANs, map[int]int{100: 1})
 	})
 
 	t.Run("3100", func(t *testing.T) {
@@ -121,9 +121,9 @@ func TestDLinkCollectorsCollectInterfaces(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		p := got["1"].(map[string]any)
-		assertDeepEqual(t, "dlink3100 vlan", p["vlan"], map[int]int{100: 1})
-		assertDeepEqual(t, "dlink3100 disab", p["disab"], 1)
+		p := got["1"]
+		assertDeepEqual(t, "dlink3100 vlan", p.VLANs, map[int]int{100: 1})
+		assertDeepEqual(t, "dlink3100 disab", p.Disabled, true)
 	})
 
 	t.Run("3028", func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestDLinkCollectorsCollectInterfaces(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		assertDeepEqual(t, "dlink3028 vlan", got["1"].(map[string]any)["vlan"], map[int]int{100: 1})
+		assertDeepEqual(t, "dlink3028 vlan", got["1"].VLANs, map[int]int{100: 1})
 	})
 
 	t.Run("2108", func(t *testing.T) {
@@ -158,7 +158,7 @@ func TestDLinkCollectorsCollectInterfaces(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		assertDeepEqual(t, "dlink2108 vlan", got["1"].(map[string]any)["vlan"], map[int]int{100: 1})
+		assertDeepEqual(t, "dlink2108 vlan", got["1"].VLANs, map[int]int{100: 1})
 	})
 
 	t.Run("1100", func(t *testing.T) {
@@ -176,7 +176,7 @@ func TestDLinkCollectorsCollectInterfaces(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		assertDeepEqual(t, "dlink1100 vlan", got["1"].(map[string]any)["vlan"], map[int]int{100: 1})
+		assertDeepEqual(t, "dlink1100 vlan", got["1"].VLANs, map[int]int{100: 1})
 	})
 }
 
@@ -196,7 +196,7 @@ func TestHuaweiQBridgeAndJuniperIfaceCollectors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		assertDeepEqual(t, "huawei qbridge vlan", got["10"].(map[string]any)["vlan"], map[int]int{})
+		assertDeepEqual(t, "huawei qbridge vlan", got["10"].VLANs, map[int]int{})
 	})
 
 	t.Run("juniperIfaceQBridgeStatic", func(t *testing.T) {
@@ -212,9 +212,9 @@ func TestHuaweiQBridgeAndJuniperIfaceCollectors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		p := got["1"].(map[string]any)
-		assertDeepEqual(t, "juniper iface vlan", p["vlan"], map[int]int{100: 1})
-		assertDeepEqual(t, "juniper iface tag", p["tag"], 1)
+		p := got["1"]
+		assertDeepEqual(t, "juniper iface vlan", p.VLANs, map[int]int{100: 1})
+		assertDeepEqual(t, "juniper iface tag", p.Tagged, true)
 	})
 }
 
@@ -323,8 +323,8 @@ func TestCollectorsMACImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		row := got["entries"].([]any)[0].(map[string]any)
-		if row["vlan"] != 200 || row["ifindex"] != 70 {
+		row := got.Entries[0]
+		if row.VLAN != 200 || row.IfIndex != 70 {
 			t.Fatalf("unexpected row: %v", row)
 		}
 	})
@@ -341,8 +341,8 @@ func TestCollectorsMACImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		row := got["entries"].([]any)[0].(map[string]any)
-		if row["vlan"] != 200 || row["ifindex"] != 10 || row["port_id"] != 110 {
+		row := got.Entries[0]
+		if row.VLAN != 200 || row.IfIndex != 10 || row.PortID != 110 {
 			t.Fatalf("unexpected row: %v", row)
 		}
 	})
@@ -357,8 +357,8 @@ func TestCollectorsMACImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		row := got["entries"].([]any)[0].(map[string]any)
-		if row["vlan"] != 200 || row["ifindex"] != 10 || row["port_id"] != 210 {
+		row := got.Entries[0]
+		if row.VLAN != 200 || row.IfIndex != 10 || row.PortID != 210 {
 			t.Fatalf("unexpected row: %v", row)
 		}
 	})
@@ -376,8 +376,8 @@ func TestCollectorsMACImplementations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
-		row := got["entries"].([]any)[0].(map[string]any)
-		if row["vlan"] != 300 || row["ifindex"] != 70 || row["port_id"] != 700 {
+		row := got.Entries[0]
+		if row.VLAN != 300 || row.IfIndex != 70 || row.PortID != 700 {
 			t.Fatalf("unexpected row: %v", row)
 		}
 	})
@@ -388,19 +388,21 @@ func TestCiscoPortSecurityEnricher(t *testing.T) {
 		ciscoPortSecurityOIDs["psecStatus"]:   {"10": "1"},
 		ciscoPortSecurityOIDs["psecMacLimit"]: {"10": "32"},
 	})
-	ports := map[string]any{
-		"10": map[string]any{"ifindex": 10},
+	ports := InterfacePorts{
+		"10": {IfIndex: 10, VLANs: map[int]int{}, Extra: map[string]string{}},
 	}
 	if err := (&ciscoPortSecurityEnricher{}).EnrichInterfaces(client, ports); err != nil {
 		t.Fatalf("EnrichInterfaces error: %v", err)
 	}
-	p := ports["10"].(map[string]any)
-	if p["psec_status"] != 1 || p["psec_mac_limit"] != 32 {
-		t.Fatalf("unexpected enriched data: %v", p)
+	p := ports["10"]
+	if len(p.Persist) == 0 {
+		t.Fatalf("expected persist op, got %v", p.Persist)
 	}
-	persist, ok := p["persist"].([]any)
-	if !ok || len(persist) == 0 {
-		t.Fatalf("expected persist op, got %v", p["persist"])
+	if p.Persist[0].Query != "upsert_port_security" {
+		t.Fatalf("unexpected persist query: %+v", p.Persist[0])
+	}
+	if p.Persist[0].Params["psec_status"] != "1" || p.Persist[0].Params["psec_mac_limit"] != "32" {
+		t.Fatalf("unexpected persist params: %+v", p.Persist[0].Params)
 	}
 }
 
@@ -410,11 +412,11 @@ func TestBridgeMIBMACIdxCommunityNoVLANs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CollectMAC error: %v", err)
 	}
-	meta := got["meta"].(map[string]any)
-	if meta["obsolete_by_vlan"] != true {
+	meta := got.Meta
+	if meta.ObsoleteByVLAN != true {
 		t.Fatalf("expected obsolete_by_vlan=true, got %v", meta)
 	}
-	if _, ok := meta["warning"]; !ok {
+	if meta.Warning == "" {
 		t.Fatalf("expected warning in meta, got %v", meta)
 	}
 }

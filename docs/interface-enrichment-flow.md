@@ -7,18 +7,18 @@
 
 ## 1) Базовый collector возвращает порты
 
-Любой `VendorIfaceCollector` возвращает `map[string]any`, где каждое значение — объект порта.
+Любой `VendorIfaceCollector` возвращает `snmp.InterfacePorts` (`map[string]snmp.InterfacePort`).
 
 Минимальная форма порта:
 
 ```go
-ports["10101"] = map[string]any{
-	"ifindex": 10101,
-	"name":    "Ten-GigabitEthernet1/0/1",
-	"descr":   "Uplink",
-	"tag":     1,
-	"disab":   0,
-	"vlan":    map[int]int{10: 1, 20: 1},
+ports["10101"] = snmp.InterfacePort{
+	IfIndex: 10101,
+	Name:    "Ten-GigabitEthernet1/0/1",
+	Descr:   "Uplink",
+	Tagged:  true,
+	Disabled:false,
+	VLANs:   map[int]int{10: 1, 20: 1},
 }
 ```
 
@@ -28,44 +28,22 @@ ports["10101"] = map[string]any{
 
 `snmp.NewIfaceCollectorWithEnrich(base, enricher1, enricher2, ...)`.
 
-Рекомендуемый подход: использовать helper `snmp.AddPortPersistOp(...)` внутри enricher,
+Рекомендуемый подход: добавлять `snmp.PortPersistOp` в `InterfacePort.Persist`,
 чтобы для каждой новой фичи не пришлось менять слой persist.
 
 Пример результата enricher для одного порта:
 
 ```go
-p["persist"] = []any{
-	map[string]any{
-		"query": "upsert_port_security",
-		"params": map[string]any{
-			"enabled":      1,
-			"max_mac":      32,
-			"current_mac":  7,
-			"violation":    "restrict",
-			"last_updated": 1745686200,
-		},
+p.Persist = append(p.Persist, snmp.PortPersistOp{
+	Query: "upsert_port_security",
+	Params: map[string]any{
+		"enabled":      1,
+		"max_mac":      32,
+		"current_mac":  7,
+		"violation":    "restrict",
+		"last_updated": 1745686200,
 	},
-}
-```
-
-Пример использования helper:
-
-```go
-snmp.AddPortPersistOp(p, "upsert_port_security", map[string]any{
-	"enabled": 1,
-	"max_mac": 32,
 })
-```
-
-Альтернативная компактная форма (тоже поддерживается):
-
-```go
-p["persist"] = map[string]any{
-	"upsert_port_security": map[string]any{
-		"enabled": 1,
-		"max_mac": 32,
-	},
-}
 ```
 
 ## 3) Factory подключает flow модели
@@ -87,9 +65,9 @@ m.ifaceCollect = snmp.NewIfaceCollectorWithEnrich(
 
 1. Upsert базовых данных порта (`update_port` / `insert_port`)
 2. Синхронизацию `port2vlan`
-3. Выполнение дополнительных операций из `port["persist"]`
+3. Выполнение дополнительных операций из `port.Persist`
 
-Дополнительно: все нестандартные поля порта (кроме базовых `ifindex/name/tag/descr/disab/vlan/persist`)
+Дополнительно: все нестандартные поля порта (из `InterfacePort.Extra`)
 автоматически прокидываются в bind для `update_port` и `insert_port`.
 Это позволяет компаниям сохранять расширенные колонки прямо в таблицу портов
 только через правку SQL-шаблона в `company.yaml`, без изменений кода persist.
@@ -150,14 +128,14 @@ company:
 Входные данные от collector/enricher:
 
 ```go
-ports["10101"] = map[string]any{
-	"ifindex": 10101,
-	"name":    "Ten-GigabitEthernet1/0/1",
-	"vlan":    map[int]int{10: 1},
-	"persist": []any{
-		map[string]any{
-			"query": "upsert_port_security",
-			"params": map[string]any{
+ports["10101"] = snmp.InterfacePort{
+	IfIndex: 10101,
+	Name:    "Ten-GigabitEthernet1/0/1",
+	VLANs:   map[int]int{10: 1},
+	Persist: []snmp.PortPersistOp{
+		{
+			Query: "upsert_port_security",
+			Params: map[string]any{
 				"enabled":      1,
 				"max_mac":      32,
 				"current_mac":  7,
@@ -198,13 +176,14 @@ ports["10101"] = map[string]any{
 
 ## 8) Пример Cisco port-security
 
-Cisco enricher может и сохранить читаемые поля в порту, и зарегистрировать persist-операцию:
+Cisco enricher регистрирует persist-операцию:
 
 ```go
-p["psec_status"] = 1
-p["psec_mac_limit"] = 32
-snmp.AddPortPersistOp(p, "upsert_port_security", map[string]any{
-	"psec_status": 1,
-	"psec_mac_limit": 32,
+p.Persist = append(p.Persist, snmp.PortPersistOp{
+	Query: "upsert_port_security",
+	Params: map[string]any{
+		"psec_status":    1,
+		"psec_mac_limit": 32,
+	},
 })
 ```

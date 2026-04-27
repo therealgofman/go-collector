@@ -35,24 +35,25 @@ func NewCiscoIfaceL2() VendorIfaceCollector {
 
 // CollectInterfaces для Cisco: untagged VLAN через community@VLAN + dot1dBasePortIfIndex, trunk через tag1..tag4 bitmap,
 // дополнение VLAN из ifXconnectPorts; фильтр портов без VLAN кроме ifType 6.
-func (*ciscoIfaceL2) CollectInterfaces(c *Client) (map[string]any, error) {
+func (*ciscoIfaceL2) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	w, err := walkMany(c, ciscoL2InterfaceOIDs, "")
 	if err != nil {
 		return nil, err
 	}
 	ifxconMap := parseCiscoXConnect(w["ifXconnectPorts"])
-	ports := map[string]map[string]any{}
+	ports := InterfacePorts{}
+	ifTypeByIfIndex := map[string]string{}
 	for ifidx, typ := range w["ifType"] {
 		n, _ := strconv.Atoi(ifidx)
-		port := map[string]any{
-			"vlan":    map[int]int{},
-			"name":    w["ifName"][ifidx],
-			"descr":   w["ifAlias"][ifidx],
-			"ifindex": n,
-			"_typ":    typ,
+		port := InterfacePort{
+			VLANs:   map[int]int{},
+			Name:    w["ifName"][ifidx],
+			Descr:   w["ifAlias"][ifidx],
+			IfIndex: n,
 		}
+		ifTypeByIfIndex[ifidx] = typ
 		if w["ifAdminStatus"][ifidx] == "2" {
-			port["disab"] = 1
+			port.Disabled = true
 		}
 		ports[ifidx] = port
 	}
@@ -80,8 +81,9 @@ func (*ciscoIfaceL2) CollectInterfaces(c *Client) (map[string]any, error) {
 			if !ok {
 				continue
 			}
-			p["vlan"].(map[int]int)[v] = 1
+			p.VLANs[v] = 1
 			untagged[ifidx] = struct{}{}
+			ports[ifidx] = p
 		}
 		vlans = append(vlans, v)
 	}
@@ -110,29 +112,29 @@ func (*ciscoIfaceL2) CollectInterfaces(c *Client) (map[string]any, error) {
 				pos = vlanNum - 3072
 			}
 			if pos >= 0 && pos < len(arr) && arr[pos] == "1" {
-				p["tag"] = 1
-				p["vlan"].(map[int]int)[vlanNum] = 1
+				p.Tagged = true
+				p.VLANs[vlanNum] = 1
 			}
 		}
+		ports[ifidx] = p
 	}
-	out := map[string]any{}
+	out := InterfacePorts{}
 	for ifidx, p := range ports {
-		if len(p["vlan"].(map[int]int)) == 0 && fmt.Sprint(p["_typ"]) != "6" {
+		if len(p.VLANs) == 0 && ifTypeByIfIndex[ifidx] != "6" {
 			continue
 		}
-		name := fmt.Sprint(p["name"])
+		name := p.Name
 		for _, key := range []string{name, shortPortName(name)} {
 			if key == "" {
 				continue
 			}
 			if extra, ok := ifxconMap[key]; ok {
 				for _, xvl := range extra {
-					p["vlan"].(map[int]int)[xvl] = 1
+					p.VLANs[xvl] = 1
 				}
 				break
 			}
 		}
-		delete(p, "_typ")
 		out[ifidx] = p
 	}
 	return out, nil
@@ -155,14 +157,14 @@ func NewCiscoIfaceL3() VendorIfaceCollector {
 }
 
 // CollectInterfaces для Cisco L3: берёт пары vlan.ifIndex из routedV и агрегирует VLAN по имени интерфейса.
-func (*ciscoIfaceL3) CollectInterfaces(c *Client) (map[string]any, error) {
+func (*ciscoIfaceL3) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	w, err := walkMany(c, ciscoL3InterfaceOIDs, "")
 	if err != nil {
 		return nil, err
 	}
 
 	re := regexp.MustCompile(`^(\d+)\.(\d+)$`)
-	out := map[string]any{}
+	out := InterfacePorts{}
 	for oidSuffix := range w["routedV"] {
 		mm := re.FindStringSubmatch(strings.TrimSpace(oidSuffix))
 		if len(mm) != 3 {
@@ -180,16 +182,17 @@ func (*ciscoIfaceL3) CollectInterfaces(c *Client) (map[string]any, error) {
 		p, ok := out[ifName]
 		if !ok {
 			n, _ := strconv.Atoi(ifidx)
-			p = map[string]any{
-				"vlan":    map[int]int{},
-				"name":    ifName,
-				"descr":   w["ifAlias"][ifidx],
-				"tag":     1,
-				"ifindex": n,
+			p = InterfacePort{
+				VLANs:   map[int]int{},
+				Name:    ifName,
+				Descr:   w["ifAlias"][ifidx],
+				Tagged:  true,
+				IfIndex: n,
 			}
 			out[ifName] = p
 		}
-		p.(map[string]any)["vlan"].(map[int]int)[vlan] = 1
+		p.VLANs[vlan] = 1
+		out[ifName] = p
 	}
 	return out, nil
 }

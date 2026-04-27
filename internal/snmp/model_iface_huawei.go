@@ -1,7 +1,6 @@
 package snmp
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,7 +42,7 @@ var huaweiQBridgeOIDs = mergeIfaceOIDMaps(
 
 // CollectInterfaces (Q-BRIDGE): Current egress/untagged, слияние dot1qPvid в egress,
 // фильтр ifType 6|62|117, hwL2IfPortIfIndex reverse → индекс в битовых масках, tag при egress && !untag.
-func (h *huaweiIfaceQBridge) CollectInterfaces(c *Client) (map[string]any, error) {
+func (h *huaweiIfaceQBridge) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	opts := qBridgeDefaultCurrentOptions(
 		map[string]string{
 			"hwL2IfPortIfIndex": "1.3.6.1.4.1.2011.5.25.42.1.1.1.3.1.2",
@@ -82,7 +81,7 @@ var huaweiInterfaceOIDs = map[string]string{
 }
 
 // CollectInterfaces (HW L2): маски hwL2VlanPortList по VLAN, PVID в egress, опционально фильтр по имени.
-func (h *huaweiIfaceHWL2) CollectInterfaces(c *Client) (map[string]any, error) {
+func (h *huaweiIfaceHWL2) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	w, err := walkMany(c, huaweiInterfaceOIDs, "")
 	if err != nil {
 		return nil, err
@@ -91,17 +90,17 @@ func (h *huaweiIfaceHWL2) CollectInterfaces(c *Client) (map[string]any, error) {
 	for k, v := range w["hwL2IfPortIfIndex"] {
 		h2i[v] = k
 	}
-	ports := map[string]map[string]any{}
+	ports := InterfacePorts{}
 	for ifidx := range w["ifType"] {
 		n, _ := strconv.Atoi(ifidx)
-		p := map[string]any{
-			"vlan":    map[int]int{},
-			"name":    w["ifName"][ifidx],
-			"descr":   w["ifAlias"][ifidx],
-			"ifindex": n,
+		p := InterfacePort{
+			VLANs:   map[int]int{},
+			Name:    w["ifName"][ifidx],
+			Descr:   w["ifAlias"][ifidx],
+			IfIndex: n,
 		}
 		if w["ifAdminStatus"][ifidx] != "1" {
-			p["disab"] = 1
+			p.Disabled = true
 		}
 		ports[ifidx] = p
 	}
@@ -144,16 +143,20 @@ func (h *huaweiIfaceHWL2) CollectInterfaces(c *Client) (map[string]any, error) {
 			egress := portList[n]
 			pt, _ := strconv.Atoi(w["hwL2IfPortType"][ifnum])
 			if pt == 1 {
-				ports[ifidx]["tag"] = 1
+				p := ports[ifidx]
+				p.Tagged = true
+				ports[ifidx] = p
 			}
 			if egress == "1" && (pt == 1 || pt == 2) {
-				ports[ifidx]["vlan"].(map[int]int)[vid] = 1
+				p := ports[ifidx]
+				p.VLANs[vid] = 1
+				ports[ifidx] = p
 			}
 		}
 	}
-	out := map[string]any{}
+	out := InterfacePorts{}
 	for ifidx, p := range ports {
-		if h.interfaceNameKeep != nil && !h.interfaceNameKeep.MatchString(fmt.Sprint(p["name"])) {
+		if h.interfaceNameKeep != nil && !h.interfaceNameKeep.MatchString(p.Name) {
 			continue
 		}
 		out[ifidx] = p

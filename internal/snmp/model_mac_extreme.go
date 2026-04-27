@@ -43,14 +43,14 @@ func formatExtremeMAC(raw string) (string, bool) {
 }
 
 // CollectMAC ifindex/vlan/mac/status по Extreme private MIB.
-func (e *extremePrivateMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string]any, error) {
+func (e *extremePrivateMAC) CollectMAC(c *Client, ctx *MacDbContext) (MACTable, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("mac_db_context is required")
+		return MACTable{}, fmt.Errorf("mac_db_context is required")
 	}
 	useBulkWalk := e.useBulkWalk
 	w, err := walkNamedOIDs(c, extremePrivateFdbOIDs, "", &useBulkWalk)
 	if err != nil {
-		return nil, err
+		return MACTable{}, err
 	}
 
 	// map intVlanLowIndex -> VLAN number.
@@ -71,7 +71,7 @@ func (e *extremePrivateMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string
 		vlanMap[strings.TrimSpace(highIdx)] = vlanNum
 	}
 
-	entries := make([]any, 0, len(w["ifi"]))
+	entries := make([]MACEntry, 0, len(w["ifi"]))
 	for key, ifidxS := range w["ifi"] {
 		macRaw, ok := w["addr"][key]
 		if !ok {
@@ -95,22 +95,21 @@ func (e *extremePrivateMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string
 			continue
 		}
 
-		row := map[string]any{
-			"ifindex": ifidx,
-			"vlan":    vlan,
-			"mac":     mac,
-			"status":  3,
+		row := MACEntry{
+			IfIndex: ifidx,
+			VLAN:    vlan,
+			MAC:     mac,
+			Status:  3,
 		}
 		if pid, ok := ctx.IfIndexToPortID[ifidx]; ok {
-			row["port_id"] = pid
+			row.PortID = pid
 		}
 		entries = append(entries, row)
 	}
-
-	return map[string]any{
-		"format":  MacTableFormatFDB,
-		"entries": entries,
-		"meta":    map[string]any{"obsolete_by_vlan": false},
+	return MACTable{
+		Format:  MacTableFormatFDB,
+		Entries: entries,
+		Meta:    MACMeta{ObsoleteByVLAN: false},
 	}, nil
 }
 
@@ -131,17 +130,17 @@ func NewExtremeXSeriesMAC(useBulkWalk bool) VendorMACCollector {
 }
 
 // CollectMAC ifindex/vlan/mac/status по Extreme EXOS private MIB.
-func (e *extremeXSeriesMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string]any, error) {
+func (e *extremeXSeriesMAC) CollectMAC(c *Client, ctx *MacDbContext) (MACTable, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("mac_db_context is required")
+		return MACTable{}, fmt.Errorf("mac_db_context is required")
 	}
 	useBulkWalk := e.useBulkWalk
 	w, err := walkNamedOIDs(c, extremeXSeriesFdbOIDs, "", &useBulkWalk)
 	if err != nil {
-		return nil, err
+		return MACTable{}, err
 	}
 
-	entries := make([]any, 0, len(w["status"]))
+	entries := make([]MACEntry, 0, len(w["status"]))
 	for key, staS := range w["status"] {
 		parts := strings.Split(strings.TrimSpace(key), ".")
 		if len(parts) < 7 {
@@ -190,23 +189,22 @@ func (e *extremeXSeriesMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string
 			continue
 		}
 
-		row := map[string]any{
-			"vlan":   vlan,
-			"mac":    mac,
-			"status": status,
+		row := MACEntry{
+			VLAN:   vlan,
+			MAC:    mac,
+			Status: status,
 		}
 		if ifidx > 0 {
-			row["ifindex"] = ifidx
+			row.IfIndex = ifidx
 			if pid, ok := ctx.IfIndexToPortID[ifidx]; ok {
-				row["port_id"] = pid
+				row.PortID = pid
 			}
 		}
 		entries = append(entries, row)
 	}
-
-	return map[string]any{
-		"format":  MacTableFormatFDB,
-		"entries": entries,
-		"meta":    map[string]any{"obsolete_by_vlan": false},
+	return MACTable{
+		Format:  MacTableFormatFDB,
+		Entries: entries,
+		Meta:    MACMeta{ObsoleteByVLAN: false},
 	}, nil
 }

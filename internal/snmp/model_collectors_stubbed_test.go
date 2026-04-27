@@ -93,13 +93,13 @@ func TestCiscoIfaceL3CollectInterfacesWithStubbedSNMP(t *testing.T) {
 		t.Fatalf("CollectInterfaces() returned error: %v", err)
 	}
 
-	p10 := got["Vlanif10"].(map[string]any)
+	p10 := got["Vlanif10"]
 	assertDeepEqual(t, "Vlanif10 metadata", map[string]any{
-		"tag":     p10["tag"],
-		"ifindex": p10["ifindex"],
-		"descr":   p10["descr"],
-	}, map[string]any{"tag": 1, "ifindex": 10, "descr": "Uplink"})
-	assertDeepEqual(t, "Vlanif10 vlan map", p10["vlan"], map[int]int{100: 1, 200: 1})
+		"tag":     p10.Tagged,
+		"ifindex": p10.IfIndex,
+		"descr":   p10.Descr,
+	}, map[string]any{"tag": true, "ifindex": 10, "descr": "Uplink"})
+	assertDeepEqual(t, "Vlanif10 vlan map", p10.VLANs, map[int]int{100: 1, 200: 1})
 }
 
 func TestQBridgeGenericCollectorCollectInterfacesWithStubbedSNMP(t *testing.T) {
@@ -144,20 +144,20 @@ func TestQBridgeGenericCollectorCollectInterfacesWithStubbedSNMP(t *testing.T) {
 	if _, ok := got["3"]; ok {
 		t.Fatalf("ifType filter failed, got port 3 in output")
 	}
-	p1 := got["1"].(map[string]any)
-	p2 := got["2"].(map[string]any)
+	p1 := got["1"]
+	p2 := got["2"]
 
 	assertDeepEqual(t, "port1 metadata", map[string]any{
-		"name":    p1["name"],
-		"ifindex": p1["ifindex"],
-		"descr":   p1["descr"],
+		"name":    p1.Name,
+		"ifindex": p1.IfIndex,
+		"descr":   p1.Descr,
 	}, map[string]any{"name": "Gi0/1", "ifindex": 1, "descr": "Port1"})
 	assertDeepEqual(t, "port2 flags", map[string]any{
-		"disab": p2["disab"],
-		"tag":   p2["tag"],
-	}, map[string]any{"disab": 1, "tag": 1})
-	assertDeepEqual(t, "port1 vlan", p1["vlan"], map[int]int{100: 1})
-	assertDeepEqual(t, "port2 vlan", p2["vlan"], map[int]int{100: 1})
+		"disab": p2.Disabled,
+		"tag":   p2.Tagged,
+	}, map[string]any{"disab": true, "tag": true})
+	assertDeepEqual(t, "port1 vlan", p1.VLANs, map[int]int{100: 1})
+	assertDeepEqual(t, "port2 vlan", p2.VLANs, map[int]int{100: 1})
 }
 
 func TestHuaweiIfaceHWL2CollectInterfacesWithStubbedSNMP(t *testing.T) {
@@ -194,13 +194,13 @@ func TestHuaweiIfaceHWL2CollectInterfacesWithStubbedSNMP(t *testing.T) {
 		t.Fatalf("CollectInterfaces() returned error: %v", err)
 	}
 
-	p := got["10"].(map[string]any)
+	p := got["10"]
 	assertDeepEqual(t, "huawei metadata", map[string]any{
-		"tag":     p["tag"],
-		"name":    p["name"],
-		"ifindex": p["ifindex"],
-	}, map[string]any{"tag": 1, "name": "Eth-Trunk10", "ifindex": 10})
-	assertDeepEqual(t, "huawei vlan map", p["vlan"], map[int]int{200: 1})
+		"tag":     p.Tagged,
+		"name":    p.Name,
+		"ifindex": p.IfIndex,
+	}, map[string]any{"tag": true, "name": "Eth-Trunk10", "ifindex": 10})
+	assertDeepEqual(t, "huawei vlan map", p.VLANs, map[int]int{200: 1})
 }
 
 func TestQBridgeMACCollectMACWithStubbedSNMP(t *testing.T) {
@@ -225,15 +225,21 @@ func TestQBridgeMACCollectMACWithStubbedSNMP(t *testing.T) {
 		t.Fatalf("CollectMAC() returned error: %v", err)
 	}
 
-	if got["format"] != MacTableFormatFDB {
-		t.Fatalf("unexpected format: %v", got["format"])
+	if got.Format != MacTableFormatFDB {
+		t.Fatalf("unexpected format: %v", got.Format)
 	}
-	entries, ok := got["entries"].([]any)
-	if !ok || len(entries) != 1 {
-		t.Fatalf("unexpected entries: %v", got["entries"])
+	entries := got.Entries
+	if len(entries) != 1 {
+		t.Fatalf("unexpected entries: %v", got.Entries)
 	}
-	row := entries[0].(map[string]any)
-	assertDeepEqual(t, "qbridge mac row", row, map[string]any{
+	row := entries[0]
+	assertDeepEqual(t, "qbridge mac row", map[string]any{
+		"ifindex": row.IfIndex,
+		"vlan":    row.VLAN,
+		"mac":     row.MAC,
+		"status":  row.Status,
+		"port_id": row.PortID,
+	}, map[string]any{
 		"ifindex": 70,
 		"vlan":    100,
 		"mac":     "01:02:03:04:05:06",

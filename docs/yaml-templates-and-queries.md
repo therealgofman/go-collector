@@ -21,8 +21,8 @@
 
 Пример вызова из репозитория:
 
-- `Repo.QueryRows("get_vlans", bind)`
-- `Repo.Exec("update_port", bind, extra)`
+- `Repo.GetVLANRows()`
+- `Repo.UpdatePort(...)`
 
 Плюсы подхода:
 
@@ -117,3 +117,13 @@ queries:
 
 - Общая архитектура: `docs/architecture-overview.md`
 - Поток enrich/persist интерфейсов: `docs/interface-enrichment-flow.md`
+
+## 10) Батчевый режим для больших инвентарей
+
+В `main` поддерживается флаг `-poll-batch-size` (по умолчанию `1000`):
+
+- свитчи режутся на батчи;
+- SNMP poll + persist выполняются по батчу;
+- для MAC DB-контекст собирается только для текущего батча.
+
+Это нужно, чтобы на больших объёмах не держать в памяти все `PollResult` сразу и не создавать избыточную пиковую нагрузку на БД.

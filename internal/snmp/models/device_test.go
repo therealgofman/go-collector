@@ -9,11 +9,11 @@ import (
 
 type ifaceCollectorStub struct {
 	gotClient *snmp.Client
-	ret       map[string]any
+	ret       snmp.InterfacePorts
 	err       error
 }
 
-func (s *ifaceCollectorStub) CollectInterfaces(c *snmp.Client) (map[string]any, error) {
+func (s *ifaceCollectorStub) CollectInterfaces(c *snmp.Client) (snmp.InterfacePorts, error) {
 	s.gotClient = c
 	return s.ret, s.err
 }
@@ -32,11 +32,11 @@ func (s *arpCollectorStub) CollectARP(c *snmp.Client) (map[string]map[string]str
 type macCollectorStub struct {
 	gotClient *snmp.Client
 	gotCtx    *snmp.MacDbContext
-	ret       map[string]any
+	ret       snmp.MACTable
 	err       error
 }
 
-func (s *macCollectorStub) CollectMAC(c *snmp.Client, ctx *snmp.MacDbContext) (map[string]any, error) {
+func (s *macCollectorStub) CollectMAC(c *snmp.Client, ctx *snmp.MacDbContext) (snmp.MACTable, error) {
 	s.gotClient = c
 	s.gotCtx = ctx
 	return s.ret, s.err
@@ -44,7 +44,9 @@ func (s *macCollectorStub) CollectMAC(c *snmp.Client, ctx *snmp.MacDbContext) (m
 
 func TestDeviceCollectInterfacesDelegatesToCollector(t *testing.T) {
 	client := &snmp.Client{}
-	expected := map[string]any{"1": map[string]any{"name": "Gi1/0/1"}}
+	expected := snmp.InterfacePorts{
+		"1": {Name: "Gi1/0/1", VLANs: map[int]int{}, Extra: map[string]string{}, Persist: []snmp.PortPersistOp{}},
+	}
 	ifaceStub := &ifaceCollectorStub{ret: expected}
 
 	m := &Device{
@@ -93,7 +95,7 @@ func TestDeviceCollectMACDelegatesToCollector(t *testing.T) {
 	ctx := &snmp.MacDbContext{
 		IfIndexToPortID: map[int]int{10: 1010},
 	}
-	expected := map[string]any{"format": snmp.MacTableFormatFDB}
+	expected := snmp.MACTable{Format: snmp.MacTableFormatFDB, Entries: []snmp.MACEntry{}}
 	macStub := &macCollectorStub{ret: expected}
 
 	m := &Device{

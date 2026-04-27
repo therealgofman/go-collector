@@ -28,12 +28,12 @@ func NewBridgeMIBMAC(fdbIdxCommunity, fdbWalkUsesGetBulk bool) VendorMACCollecto
 
 // CollectMAC (bridgeMIBMAC) обходит FDB OID, строит записи port_id/vlan/mac/status (MacTableFormatFDB) для persist;
 // при fdbIdxCommunity использует ctx.IdxcomVLANWalks и выставляет meta.obsolete_by_vlan.
-func (b *bridgeMIBMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string]any, error) {
+func (b *bridgeMIBMAC) CollectMAC(c *Client, ctx *MacDbContext) (MACTable, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("mac_db_context is required")
+		return MACTable{}, fmt.Errorf("mac_db_context is required")
 	}
 	useBulkWalk := b.fdbWalkUsesGetBulk
-	entries := make([]any, 0)
+	entries := make([]MACEntry, 0)
 	parse := func(community string, fixedVLAN *int, fixedVLANID *int) error {
 		w, err := walkNamedOIDs(c, fdbOIDs, community, &useBulkWalk)
 		if err != nil {
@@ -77,52 +77,47 @@ func (b *bridgeMIBMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string]any,
 			} else {
 				vlan = 9999
 			}
-			row := map[string]any{
-				"ifindex": ifidx,
-				"vlan":    vlan,
-				"mac":     mac,
-				"status":  status,
+			row := MACEntry{
+				IfIndex: ifidx,
+				VLAN:    vlan,
+				MAC:     mac,
+				Status:  status,
 			}
 			if pid, ok := ctx.IfIndexToPortID[ifidx]; ok {
-				row["port_id"] = pid
+				row.PortID = pid
 			}
 			if fixedVLANID != nil {
-				row["vlan_id"] = *fixedVLANID
+				row.VLANID = *fixedVLANID
 			}
 			entries = append(entries, row)
 		}
 		return nil
 	}
-	meta := map[string]any{"obsolete_by_vlan": false}
+	meta := MACMeta{ObsoleteByVLAN: false}
 	if b.fdbIdxCommunity {
-		meta["obsolete_by_vlan"] = true
+		meta.ObsoleteByVLAN = true
 		if len(ctx.IdxcomVLANWalks) == 0 {
-			meta["warning"] = "idxcom enabled but no VLANs from DB (query: get_vlan_list_for_mac_idxcom)"
-			return map[string]any{"format": MacTableFormatFDB, "entries": entries, "meta": meta}, nil
+			meta.Warning = "idxcom enabled but no VLANs from DB (query: get_vlan_list_for_mac_idxcom)"
+			return MACTable{Format: MacTableFormatFDB, Entries: entries, Meta: meta}, nil
 		}
 		for _, pair := range ctx.IdxcomVLANWalks {
 			vn := pair[0]
 			vdb := pair[1]
 			comm := fmt.Sprintf("%s@%d", c.Community, vn)
 			if err := parse(comm, &vn, &vdb); err != nil {
-				return nil, err
+				return MACTable{}, err
 			}
 		}
 	} else if err := parse("", nil, nil); err != nil {
-		return nil, err
+		return MACTable{}, err
 	}
 
 	fallbackByVLANIfIndex := map[int]map[int]int{}
-	for _, it := range entries {
-		row, ok := it.(map[string]any)
-		if !ok {
+	for _, row := range entries {
+		if row.VLAN != 9999 {
 			continue
 		}
-		vlan, ok := row["vlan"]
-		if !ok || strings.TrimSpace(fmt.Sprint(vlan)) != "9999" {
-			continue
-		}
-		ifidx := strings.TrimSpace(fmt.Sprint(row["ifindex"]))
+		ifidx := strings.TrimSpace(fmt.Sprint(row.IfIndex))
 		if ifidx == "" {
 			ifidx = "0"
 		}
@@ -134,17 +129,7 @@ func (b *bridgeMIBMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string]any,
 		}
 	}
 	if len(fallbackByVLANIfIndex) > 0 {
-		extra := map[string]any{}
-		out := map[string]any{}
-		for vlan, ifMap := range fallbackByVLANIfIndex {
-			vMap := map[string]any{}
-			for ifidx, n := range ifMap {
-				vMap[strconv.Itoa(ifidx)] = n
-			}
-			out[strconv.Itoa(vlan)] = vMap
-		}
-		extra["fallback_vlan_ifindex_counts"] = out
-		meta["extra"] = extra
+		meta.FallbackVLANIfIndexCounts = fallbackByVLANIfIndex
 	}
-	return map[string]any{"format": MacTableFormatFDB, "entries": entries, "meta": meta}, nil
+	return MACTable{Format: MacTableFormatFDB, Entries: entries, Meta: meta}, nil
 }

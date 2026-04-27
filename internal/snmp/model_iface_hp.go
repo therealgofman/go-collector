@@ -1,7 +1,6 @@
 package snmp
 
 import (
-	"go-collector/internal/helpers"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,7 +38,7 @@ func NewHPE5900IfaceQBridgeStatic() VendorIfaceCollector {
 	return NewHPEIfaceQBridgeStatic(hpe5900InterfaceNameKeep)
 }
 
-func (h *hpeIfaceQBridgeStatic) CollectInterfaces(c *Client) (map[string]any, error) {
+func (h *hpeIfaceQBridgeStatic) CollectInterfaces(c *Client) (InterfacePorts, error) {
 	w, err := walkMany(c, hpeQBridgeInterfaceOIDs, "")
 	if err != nil {
 		return nil, err
@@ -52,7 +51,7 @@ func (h *hpeIfaceQBridgeStatic) CollectInterfaces(c *Client) (map[string]any, er
 		false,
 	)
 
-	ports := map[string]map[string]any{}
+	ports := InterfacePorts{}
 	bridgePortPosByIfIndex := map[string]int{}
 	for bridgePortS, ifindex := range w["dot1dBasePortIfIndex"] {
 		bridgePort, err := strconv.Atoi(strings.TrimSpace(bridgePortS))
@@ -71,17 +70,19 @@ func (h *hpeIfaceQBridgeStatic) CollectInterfaces(c *Client) (map[string]any, er
 		}
 
 		n, _ := strconv.Atoi(ifidx)
-		p := map[string]any{
-			"name":         name,
-			"descr":        w["ifAlias"][ifidx],
-			"ifindex":      n,
-			"vlan":         map[int]int{},
-			"ifspeed":      strings.TrimSpace(w["ifHighSpeed"][ifidx]),
-			"ifadm_status": strings.TrimSpace(w["ifAdminStatus"][ifidx]),
-			"ifop_status":  strings.TrimSpace(w["ifOperStatus"][ifidx]),
+		p := InterfacePort{
+			Name:    name,
+			Descr:   w["ifAlias"][ifidx],
+			IfIndex: n,
+			VLANs:   map[int]int{},
+			Extra: map[string]string{
+				"ifspeed":      strings.TrimSpace(w["ifHighSpeed"][ifidx]),
+				"ifadm_status": strings.TrimSpace(w["ifAdminStatus"][ifidx]),
+				"ifop_status":  strings.TrimSpace(w["ifOperStatus"][ifidx]),
+			},
 		}
 		if strings.TrimSpace(w["ifAdminStatus"][ifidx]) != "1" {
-			p["disab"] = 1
+			p.Disabled = true
 		}
 		ports[ifidx] = p
 	}
@@ -99,13 +100,14 @@ func (h *hpeIfaceQBridgeStatic) CollectInterfaces(c *Client) (map[string]any, er
 			egress := pos < len(eArr) && eArr[pos] == "1"
 			untag := pos < len(uArr) && uArr[pos] == "1"
 			if egress && !untag {
-				p["tag"] = 1
+				p.Tagged = true
 			}
 			if egress || untag {
-				p["vlan"].(map[int]int)[vid] = 1
+				p.VLANs[vid] = 1
 			}
+			ports[ifidx] = p
 		}
 	}
 
-	return helpers.PortsToAnyMap(ports), nil
+	return ports, nil
 }

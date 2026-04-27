@@ -25,17 +25,17 @@ func NewQBridgeMAC(fdbWalkUsesGetBulk bool) VendorMACCollector {
 }
 
 // CollectMAC (Q-BRIDGE): VLAN берётся из префикса ключа FDB, ifIndex — через dot1dBasePortIfIndex.
-func (m *qbridgeMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string]any, error) {
+func (m *qbridgeMAC) CollectMAC(c *Client, ctx *MacDbContext) (MACTable, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("mac_db_context is required")
+		return MACTable{}, fmt.Errorf("mac_db_context is required")
 	}
 	useBulkWalk := m.fdbWalkUsesGetBulk
 	w, err := walkNamedOIDs(c, qbridgeFdbOIDs, "", &useBulkWalk)
 	if err != nil {
-		return nil, err
+		return MACTable{}, err
 	}
 
-	entries := make([]any, 0, len(w["dot1qTpFdbPort"]))
+	entries := make([]MACEntry, 0, len(w["dot1qTpFdbPort"]))
 	for key, portV := range w["dot1qTpFdbPort"] {
 		parts := strings.SplitN(strings.TrimSpace(key), ".", 2)
 		if len(parts) != 2 {
@@ -82,21 +82,20 @@ func (m *qbridgeMAC) CollectMAC(c *Client, ctx *MacDbContext) (map[string]any, e
 			}
 		}
 
-		row := map[string]any{
-			"ifindex": ifidx,
-			"vlan":    vlan,
-			"mac":     mac,
-			"status":  status,
+		row := MACEntry{
+			IfIndex: ifidx,
+			VLAN:    vlan,
+			MAC:     mac,
+			Status:  status,
 		}
 		if pid, ok := ctx.IfIndexToPortID[ifidx]; ok {
-			row["port_id"] = pid
+			row.PortID = pid
 		}
 		entries = append(entries, row)
 	}
-
-	return map[string]any{
-		"format":  MacTableFormatFDB,
-		"entries": entries,
-		"meta":    map[string]any{"obsolete_by_vlan": false},
+	return MACTable{
+		Format:  MacTableFormatFDB,
+		Entries: entries,
+		Meta:    MACMeta{ObsoleteByVLAN: false},
 	}, nil
 }

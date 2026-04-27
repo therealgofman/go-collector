@@ -6,8 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"strconv"
-	"sync"
 
 	"go-collector/internal/config"
 	"go-collector/internal/db"
@@ -16,38 +14,20 @@ import (
 	"go-collector/internal/snmp"
 )
 
-// mapRows — тождественное отображение строк из репозитория (явный тип для читаемости main).
-func mapRows(rows []map[string]any) []map[string]any { return rows }
-
-// asInt парсит any в int с запасным значением def (статистика persist).
-func asInt(v any, def int) int {
-	n, err := strconv.Atoi(fmt.Sprint(v))
-	if err != nil {
-		return def
+func splitSwitchesInBatches(items []snmp.SwitchRow, batchSize int) [][]snmp.SwitchRow {
+	if len(items) == 0 {
+		return [][]snmp.SwitchRow{}
 	}
-	return n
-}
-
-// asInt64 используется для счётчиков affected rows MySQL в выводе persist.
-func asInt64(v any, def int64) int64 {
-	n, err := strconv.ParseInt(fmt.Sprint(v), 10, 64)
-	if err != nil {
-		return def
+	if batchSize <= 0 {
+		return [][]snmp.SwitchRow{items}
 	}
-	return n
-}
-
-// asErrors извлекает срез строк из поля prepare_errors (может быть []string или []any).
-func asErrors(v any) []string {
-	out := []string{}
-	raw, ok := v.([]string)
-	if ok {
-		return raw
-	}
-	if arr, ok := v.([]any); ok {
-		for _, x := range arr {
-			out = append(out, fmt.Sprint(x))
+	out := make([][]snmp.SwitchRow, 0, (len(items)+batchSize-1)/batchSize)
+	for i := 0; i < len(items); i += batchSize {
+		end := i + batchSize
+		if end > len(items) {
+			end = len(items)
 		}
+		out = append(out, items[i:end])
 	}
 	return out
 }
@@ -65,6 +45,7 @@ func main() {
 	var configDir, companyCode string
 	var switchID int
 	var snmpOIDTiming bool
+	var pollBatchSize int
 	flag.StringVar(&companyCode, "company", "", "код компании из config/companies/<код>.yaml (обязательно)")
 	flag.StringVar(&configDir, "config-dir", "config", "каталог с app.yaml и подкаталогом companies/")
 	flag.BoolVar(&collectInterfaces, "collect-interfaces", false, "собирать интерфейсы")
@@ -74,6 +55,7 @@ func main() {
 	flag.BoolVar(&snmpOIDTiming, "snmp-oid-timing", false, "логировать время обхода по каждому OID SNMP")
 	flag.BoolVar(&dryRun, "dry-run", false, "не писать в БД")
 	flag.IntVar(&switchID, "switch-id", 0, "один свитч по id (точечный режим)")
+	flag.IntVar(&pollBatchSize, "poll-batch-size", 1000, "размер батча свитчей для опроса/persist (защита памяти на больших объёмах)")
 	flag.Parse()
 
 	if companyCode == "" {
@@ -108,21 +90,21 @@ func main() {
 	if switchID > 0 {
 		sidPtr = &switchID
 	}
-	ifaceSw := []map[string]any{}
-	arpSw := []map[string]any{}
+	ifaceSw := []snmp.SwitchRow{}
+	arpSw := []snmp.SwitchRow{}
 	if collectInterfaces || collectMAC {
 		rows, err := repo.GetSwitchesForPoll(sidPtr)
 		if err != nil {
 			log.Fatal(err)
 		}
-		ifaceSw = mapRows(rows)
+		ifaceSw = rows
 	}
 	if collectARP {
 		rows, err := repo.GetSwitchesForPollARP(sidPtr)
 		if err != nil {
 			log.Fatal(err)
 		}
-		arpSw = mapRows(rows)
+		arpSw = rows
 	}
 
 	rules := appCfg.SNMPSwitchModels
@@ -141,37 +123,6 @@ func main() {
 		OIDTiming:             snmpOIDTiming,
 		GetBulkMaxRepetitions: snmpCfg.GetBulkMaxRepetitions,
 	}
-	if collectMAC {
-		opt.TimeoutSec = snmpCfg.TimeoutMACS
-		opt.MacCtxBySID = map[int]*snmp.MacDbContext{}
-		for _, sw := range ifaceSw {
-			id := asInt(sw["d_switch_id"], asInt(sw["switch_id"], 0))
-			if id <= 0 {
-				continue
-			}
-			ctx, err := repo.BuildMACDBContext(id)
-			if err == nil {
-				opt.MacCtxBySID[id] = ctx
-			}
-		}
-	}
-
-	var ifaceRes, arpRes, macRes []snmp.PollResult
-	var wg sync.WaitGroup
-	if collectInterfaces {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ifaceRes = poll.RunBatch(ifaceSw, "interfaces", opt)
-		}()
-	}
-	if collectARP {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			arpRes = poll.RunBatch(arpSw, "arp", opt)
-		}()
-	}
 	if (collectInterfaces || collectMAC) && len(ifaceSw) == 0 && (!collectARP || len(arpSw) == 0) {
 		if switchID > 0 {
 			fmt.Printf("Нечего опрашивать (--switch-id %d: нет строки в БД для этого режима).\n", switchID)
@@ -186,43 +137,48 @@ func main() {
 	if collectARP {
 		fmt.Printf("свитчи (arp): %d\n", len(arpSw))
 	}
-	if collectMAC {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			macRes = poll.RunBatch(ifaceSw, "mac", opt)
-		}()
-	}
-	wg.Wait()
 
 	if collectInterfaces {
-		ok := 0
-		for _, r := range ifaceRes {
-			if r.Success {
-				ok++
+		okTotal, total := 0, 0
+		agg := persist.PersistInterfacesStats{PrepareErrors: []string{}}
+		batches := splitSwitchesInBatches(ifaceSw, pollBatchSize)
+		for i, batch := range batches {
+			// Батчируем, чтобы не держать в памяти результаты по всем свитчам сразу.
+			fmt.Printf("interfaces: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
+			res := poll.RunBatch(batch, "interfaces", opt)
+			total += len(res)
+			for _, r := range res {
+				if r.Success {
+					okTotal++
+				}
+				if r.Success && r.Interfaces != nil {
+					poll.PrintSwitchInterfaces(r.Interfaces, fmt.Sprint(r.SwitchID), r.IP)
+				}
 			}
-		}
-		fmt.Printf("интерфейсы собраны: успех %d/%d\n", ok, len(ifaceRes))
-		for _, r := range ifaceRes {
-			if r.Success && r.Interfaces != nil {
-				poll.PrintSwitchInterfaces(r.Interfaces, fmt.Sprint(r.SwitchID), r.IP)
+			if dryRun {
+				continue
 			}
-		}
-		if dryRun {
-			fmt.Println("БД интерфейсов: пропуск (--dry-run)")
-		} else {
-			stats, err := persistSvc.PersistInterfaces(ifaceRes)
+			stats, err := persistSvc.PersistInterfaces(res)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if stats["skipped"] == true {
+			agg.Skipped = stats.Skipped
+			agg.SwitchesProcessed += stats.SwitchesProcessed
+			agg.VLANLinks += stats.VLANLinks
+			agg.PrepareErrors = append(agg.PrepareErrors, stats.PrepareErrors...)
+		}
+		fmt.Printf("интерфейсы собраны: успех %d/%d\n", okTotal, total)
+		if dryRun {
+			fmt.Println("БД интерфейсов: пропуск (--dry-run)")
+		} else {
+			if agg.Skipped {
 				fmt.Println("БД интерфейсов: пропуск (только чтение)")
 			} else {
-				warns := asErrors(stats["prepare_errors"])
+				warns := agg.PrepareErrors
 				fmt.Printf(
 					"БД интерфейсов: сохранено — связи vlan/порт=%d, свитчи=%d, предупреждений=%d\n",
-					asInt(stats["vlan_links"], 0),
-					asInt(stats["switches_processed"], 0),
+					agg.VLANLinks,
+					agg.SwitchesProcessed,
 					len(warns),
 				)
 				logWarnings("ПРЕДУПРЕЖДЕНИЕ persist интерфейсов", warns)
@@ -230,23 +186,37 @@ func main() {
 		}
 	}
 	if collectARP {
-		poll.PrintArpPollSummary(arpRes)
-		if dryRun {
-			fmt.Println("БД ARP: пропуск (--dry-run)")
-		} else {
-			stats, err := persistSvc.PersistARP(arpRes)
+		agg := persist.PersistARPStats{PrepareErrors: []string{}}
+		batches := splitSwitchesInBatches(arpSw, pollBatchSize)
+		for i, batch := range batches {
+			fmt.Printf("arp: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
+			res := poll.RunBatch(batch, "arp", opt)
+			poll.PrintArpPollSummary(res)
+			if dryRun {
+				continue
+			}
+			stats, err := persistSvc.PersistARP(res)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if stats["skipped"] == true {
+			agg.Skipped = stats.Skipped
+			agg.RowsUpserted += stats.RowsUpserted
+			agg.MySQLAffectedRows += stats.MySQLAffectedRows
+			agg.SwitchesProcessed += stats.SwitchesProcessed
+			agg.PrepareErrors = append(agg.PrepareErrors, stats.PrepareErrors...)
+		}
+		if dryRun {
+			fmt.Println("БД ARP: пропуск (--dry-run)")
+		} else {
+			if agg.Skipped {
 				fmt.Println("БД ARP: пропуск (только чтение)")
 			} else {
-				warns := asErrors(stats["prepare_errors"])
+				warns := agg.PrepareErrors
 				fmt.Printf(
 					"БД ARP: сохранено — upsert=%d, сумма affected rows MySQL=%d, свитчи=%d, предупреждений prepare=%d\n",
-					asInt(stats["rows_upserted"], 0),
-					asInt64(stats["mysql_affected_rows_sum"], int64(asInt(stats["rows_upserted"], 0))),
-					asInt(stats["switches_processed"], 0),
+					agg.RowsUpserted,
+					agg.MySQLAffectedRows,
+					agg.SwitchesProcessed,
 					len(warns),
 				)
 				logWarnings("ПРЕДУПРЕЖДЕНИЕ prepare ARP", warns)
@@ -254,35 +224,60 @@ func main() {
 		}
 	}
 	if collectMAC {
-		poll.PrintMacPollSummary(macRes)
-		stats, err := persistSvc.PersistMAC(macRes, dryRun)
-		if err != nil {
-			log.Fatal(err)
+		agg := persist.PersistMACStats{PrepareErrors: []string{}}
+		batches := splitSwitchesInBatches(ifaceSw, pollBatchSize)
+		for i, batch := range batches {
+			fmt.Printf("mac: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
+			macOpt := opt
+			macOpt.TimeoutSec = snmpCfg.TimeoutMACS
+			// Контекст MAC строим только для текущего батча, чтобы не делать N+1 по всем свитчам заранее.
+			macOpt.MacCtxBySID = map[int]*snmp.MacDbContext{}
+			for _, sw := range batch {
+				if sw.ID <= 0 {
+					continue
+				}
+				ctx, err := repo.BuildMACDBContext(sw.ID)
+				if err == nil {
+					macOpt.MacCtxBySID[sw.ID] = ctx
+				}
+			}
+			res := poll.RunBatch(batch, "mac", macOpt)
+			poll.PrintMacPollSummary(res)
+			stats, err := persistSvc.PersistMAC(res, dryRun)
+			if err != nil {
+				log.Fatal(err)
+			}
+			agg.Skipped = stats.Skipped
+			agg.RowsUpserted += stats.RowsUpserted
+			agg.MySQLAffectedRows += stats.MySQLAffectedRows
+			agg.ObsoleteRowsAffected += stats.ObsoleteRowsAffected
+			agg.SwitchesProcessed += stats.SwitchesProcessed
+			agg.PrepareErrors = append(agg.PrepareErrors, stats.PrepareErrors...)
 		}
 		if dryRun {
 			fmt.Println("БД MAC: dry-run (без записи) — тот же prepare, что при сохранении; предупреждения ниже при наличии")
-			if stats["skipped"] == true {
+			if agg.Skipped {
 				fmt.Println("БД MAC: prepare пропущен (только чтение; для полного dry-run prepare нужна доступная на запись конфигурация компании)")
 			} else {
-				warns := asErrors(stats["prepare_errors"])
+				warns := agg.PrepareErrors
 				fmt.Printf(
 					"БД MAC: dry-run — было бы upsert=%d, свитчи=%d, предупреждений=%d\n",
-					asInt(stats["rows_upserted"], 0),
-					asInt(stats["switches_processed"], 0),
+					agg.RowsUpserted,
+					agg.SwitchesProcessed,
 					len(warns),
 				)
 				logWarnings("ПРЕДУПРЕЖДЕНИЕ persist MAC", warns)
 			}
 		} else {
-			if stats["skipped"] == true {
+			if agg.Skipped {
 				fmt.Println("БД MAC: пропуск (только чтение или нет upsert_mac_forward в yaml компании)")
 			} else {
-				warns := asErrors(stats["prepare_errors"])
+				warns := agg.PrepareErrors
 				fmt.Printf(
 					"БД MAC: сохранено — upsert=%d, помечено устаревших=%d, свитчи=%d, предупреждений=%d\n",
-					asInt(stats["rows_upserted"], 0),
-					asInt64(stats["obsolete_rows_affected"], 0),
-					asInt(stats["switches_processed"], 0),
+					agg.RowsUpserted,
+					agg.ObsoleteRowsAffected,
+					agg.SwitchesProcessed,
 					len(warns),
 				)
 				logWarnings("ПРЕДУПРЕЖДЕНИЕ persist MAC", warns)
