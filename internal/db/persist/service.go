@@ -222,6 +222,12 @@ type macPersistDelta struct {
 	warnings             []string
 }
 
+type interfacesPersistDelta struct {
+	linksInserted   int
+	switchProcessed bool
+	warnings        []string
+}
+
 // parseInterfaces превращает typed InterfacePorts из CollectInterfaces в срез с отсортированным списком VLAN на порт.
 func parseInterfaces(interfaces snmp.InterfacePorts) []parsedInterface {
 	out := []parsedInterface{}
@@ -597,34 +603,53 @@ func (p *Service) PersistInterfaces(results []snmp.PollResult) (PersistInterface
 	allWarnings := []string{}
 	switchesProcessed := 0
 	for _, pr := range results {
-		if !pr.Success {
-			continue
+		delta, err := p.persistInterfacesSwitch(pr, local, global)
+		if err != nil {
+			return PersistInterfacesStats{}, err
 		}
-		sid := pr.Switch.ID
-		if sid <= 0 {
-			continue
+		totalLinks += delta.linksInserted
+		allWarnings = append(allWarnings, delta.warnings...)
+		if delta.switchProcessed {
+			switchesProcessed++
 		}
-		// Обновляем sysname_snmp из sysDescr, если разрешено запросом update_switch_sysname_snmp.
-		if p.repo.Company.IsPersistQueryEnabled("update_switch_sysname_snmp") {
-			if err := p.repo.UpdateSwitchSysnameSNMP(sid, pr.SysDescr); err != nil {
-				return PersistInterfacesStats{}, err
-			}
-		}
-		if pr.Interfaces != nil {
-			n, warns, err := p.fillTablesFromInterfaces(sid, pr.Interfaces, pr.Switch.DomainID, pr.IP, local, global)
-			if err != nil {
-				return PersistInterfacesStats{}, err
-			}
-			totalLinks += n
-			allWarnings = append(allWarnings, warns...)
-		}
-		switchesProcessed++
 	}
 	return PersistInterfacesStats{
 		Skipped:           false,
 		SwitchesProcessed: switchesProcessed,
 		VLANLinks:         totalLinks,
 		PrepareErrors:     summarizeMessages(allWarnings),
+	}, nil
+}
+
+func (p *Service) persistInterfacesSwitch(
+	pr snmp.PollResult,
+	local map[string]map[int]int,
+	global map[int]int,
+) (interfacesPersistDelta, error) {
+	if !pr.Success {
+		return interfacesPersistDelta{}, nil
+	}
+	sid := pr.Switch.ID
+	if sid <= 0 {
+		return interfacesPersistDelta{}, nil
+	}
+	// Обновляем sysname_snmp из sysDescr, если разрешено запросом update_switch_sysname_snmp.
+	if p.repo.Company.IsPersistQueryEnabled("update_switch_sysname_snmp") {
+		if err := p.repo.UpdateSwitchSysnameSNMP(sid, pr.SysDescr); err != nil {
+			return interfacesPersistDelta{}, err
+		}
+	}
+	if pr.Interfaces == nil {
+		return interfacesPersistDelta{switchProcessed: true}, nil
+	}
+	n, warns, err := p.fillTablesFromInterfaces(sid, pr.Interfaces, pr.Switch.DomainID, pr.IP, local, global)
+	if err != nil {
+		return interfacesPersistDelta{}, err
+	}
+	return interfacesPersistDelta{
+		linksInserted:   n,
+		switchProcessed: true,
+		warnings:        warns,
 	}, nil
 }
 

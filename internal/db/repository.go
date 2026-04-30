@@ -276,13 +276,28 @@ type switchPollRow struct {
 	HostName  string        `db:"host_name"`
 }
 
-func cleanSwitchField(s string) string {
-	s = strings.ReplaceAll(s, "\x00", "")
-	return strings.TrimSpace(s)
-}
-
 func sanitizeDBString(s string) string {
 	return strings.TrimSpace(strings.ReplaceAll(s, "\x00", ""))
+}
+
+func chooseSwitchID(row switchPollRow) int {
+	if row.DSwitchID.Valid {
+		return int(row.DSwitchID.Int64)
+	}
+	if row.SwitchID.Valid {
+		return int(row.SwitchID.Int64)
+	}
+	return 0
+}
+
+func mapSwitchPollRow(row switchPollRow) snmp.SwitchRow {
+	return snmp.SwitchRow{
+		ID:       chooseSwitchID(row),
+		IP:       sanitizeDBString(row.IP),
+		Comm:     sanitizeDBString(row.Comm),
+		DomainID: sanitizeDBString(row.DomainID),
+		HostName: sanitizeDBString(row.HostName),
+	}
 }
 
 func (r *Repository) getSwitchRows(name string, switchID *int) ([]snmp.SwitchRow, error) {
@@ -307,19 +322,7 @@ func (r *Repository) getSwitchRows(name string, switchID *int) ([]snmp.SwitchRow
 		if err := rows.StructScan(&row); err != nil {
 			return nil, err
 		}
-		id := 0
-		if row.DSwitchID.Valid {
-			id = int(row.DSwitchID.Int64)
-		} else if row.SwitchID.Valid {
-			id = int(row.SwitchID.Int64)
-		}
-		out = append(out, snmp.SwitchRow{
-			ID:       id,
-			IP:       cleanSwitchField(row.IP),
-			Comm:     cleanSwitchField(row.Comm),
-			DomainID: cleanSwitchField(row.DomainID),
-			HostName: cleanSwitchField(row.HostName),
-		})
+		out = append(out, mapSwitchPollRow(row))
 	}
 	return out, nil
 }

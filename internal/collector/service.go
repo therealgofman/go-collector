@@ -187,21 +187,18 @@ func (s *Service) runInterfaces(state *runtimeState) error {
 	okTotal, total := 0, 0
 	agg := persist.PersistInterfacesStats{PrepareErrors: []string{}}
 	batches := splitSwitchesInBatches(state.ifaceSw, s.opts.PollBatchSize)
+	runBatch := func(batch []snmp.SwitchRow, batchIndex int, batchesTotal int) ([]snmp.PollResult, error) {
+		fmt.Printf("interfaces: batch %d/%d (size=%d)\n", batchIndex+1, batchesTotal, len(batch))
+		return runBatchWithTimeout(state.snmpCfg, batch, "interfaces", state.pollOpt, batchIndex, batchesTotal)
+	}
 	for i, batch := range batches {
-		fmt.Printf("interfaces: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
-		res, err := runBatchWithTimeout(state.snmpCfg, batch, "interfaces", state.pollOpt, i, len(batches))
+		res, err := runBatch(batch, i, len(batches))
 		if err != nil {
 			return err
 		}
-		total += len(res)
-		for _, r := range res {
-			if r.Success {
-				okTotal++
-			}
-			if r.Success && r.Interfaces != nil {
-				poll.PrintSwitchInterfaces(r.Interfaces, fmt.Sprint(r.SwitchID), r.IP)
-			}
-		}
+		okInc, totalInc := printInterfacesBatchResults(res)
+		okTotal += okInc
+		total += totalInc
 		if s.opts.DryRun {
 			continue
 		}
@@ -209,13 +206,105 @@ func (s *Service) runInterfaces(state *runtimeState) error {
 		if err != nil {
 			return err
 		}
-		agg.Skipped = stats.Skipped
-		agg.SwitchesProcessed += stats.SwitchesProcessed
-		agg.VLANLinks += stats.VLANLinks
-		agg.PrepareErrors = append(agg.PrepareErrors, stats.PrepareErrors...)
+		mergeInterfacesStats(&agg, stats)
 	}
+	return printInterfacesPersistSummary(okTotal, total, agg, s.opts.DryRun)
+}
+
+func (s *Service) runARP(state *runtimeState) error {
+	if !s.opts.CollectARP {
+		return nil
+	}
+	agg := persist.PersistARPStats{PrepareErrors: []string{}}
+	batches := splitSwitchesInBatches(state.arpSw, s.opts.PollBatchSize)
+	runBatch := func(batch []snmp.SwitchRow, batchIndex int, batchesTotal int) ([]snmp.PollResult, error) {
+		fmt.Printf("arp: batch %d/%d (size=%d)\n", batchIndex+1, batchesTotal, len(batch))
+		return runBatchWithTimeout(state.snmpCfg, batch, "arp", state.pollOpt, batchIndex, batchesTotal)
+	}
+	for i, batch := range batches {
+		res, err := runBatch(batch, i, len(batches))
+		if err != nil {
+			return err
+		}
+		poll.PrintArpPollSummary(res)
+		if s.opts.DryRun {
+			continue
+		}
+		stats, err := state.persistSvc.PersistARP(res)
+		if err != nil {
+			return err
+		}
+		mergeARPStats(&agg, stats)
+	}
+	return printARPPersistSummary(agg, s.opts.DryRun)
+}
+
+func (s *Service) runMAC(state *runtimeState) error {
+	if !s.opts.CollectMAC {
+		return nil
+	}
+	agg := persist.PersistMACStats{PrepareErrors: []string{}}
+	batches := splitSwitchesInBatches(state.ifaceSw, s.opts.PollBatchSize)
+	runBatch := func(batch []snmp.SwitchRow, batchIndex int, batchesTotal int) ([]snmp.PollResult, error) {
+		fmt.Printf("mac: batch %d/%d (size=%d)\n", batchIndex+1, batchesTotal, len(batch))
+		macOpt := s.buildMACPollOptions(state, batch)
+		return runBatchWithTimeout(state.snmpCfg, batch, "mac", macOpt, batchIndex, batchesTotal)
+	}
+	for i, batch := range batches {
+		res, err := runBatch(batch, i, len(batches))
+		if err != nil {
+			return err
+		}
+		poll.PrintMacPollSummary(res)
+		stats, err := state.persistSvc.PersistMAC(res, s.opts.DryRun)
+		if err != nil {
+			return err
+		}
+		mergeMACStats(&agg, stats)
+	}
+	return printMACPersistSummary(agg, s.opts.DryRun)
+}
+
+func printInterfacesBatchResults(res []snmp.PollResult) (int, int) {
+	okCount := 0
+	for _, r := range res {
+		if r.Success {
+			okCount++
+		}
+		if r.Success && r.Interfaces != nil {
+			poll.PrintSwitchInterfaces(r.Interfaces, fmt.Sprint(r.SwitchID), r.IP)
+		}
+	}
+	return okCount, len(res)
+}
+
+func mergeInterfacesStats(dst *persist.PersistInterfacesStats, src persist.PersistInterfacesStats) {
+	dst.Skipped = src.Skipped
+	dst.SwitchesProcessed += src.SwitchesProcessed
+	dst.VLANLinks += src.VLANLinks
+	dst.PrepareErrors = append(dst.PrepareErrors, src.PrepareErrors...)
+}
+
+func mergeARPStats(dst *persist.PersistARPStats, src persist.PersistARPStats) {
+	dst.Skipped = src.Skipped
+	dst.RowsUpserted += src.RowsUpserted
+	dst.MySQLAffectedRows += src.MySQLAffectedRows
+	dst.SwitchesProcessed += src.SwitchesProcessed
+	dst.PrepareErrors = append(dst.PrepareErrors, src.PrepareErrors...)
+}
+
+func mergeMACStats(dst *persist.PersistMACStats, src persist.PersistMACStats) {
+	dst.Skipped = src.Skipped
+	dst.RowsUpserted += src.RowsUpserted
+	dst.MySQLAffectedRows += src.MySQLAffectedRows
+	dst.ObsoleteRowsAffected += src.ObsoleteRowsAffected
+	dst.SwitchesProcessed += src.SwitchesProcessed
+	dst.PrepareErrors = append(dst.PrepareErrors, src.PrepareErrors...)
+}
+
+func printInterfacesPersistSummary(okTotal int, total int, agg persist.PersistInterfacesStats, dryRun bool) error {
 	fmt.Printf("интерфейсы собраны: успех %d/%d\n", okTotal, total)
-	if s.opts.DryRun {
+	if dryRun {
 		fmt.Println("БД интерфейсов: пропуск (--dry-run)")
 		return nil
 	}
@@ -234,33 +323,8 @@ func (s *Service) runInterfaces(state *runtimeState) error {
 	return nil
 }
 
-func (s *Service) runARP(state *runtimeState) error {
-	if !s.opts.CollectARP {
-		return nil
-	}
-	agg := persist.PersistARPStats{PrepareErrors: []string{}}
-	batches := splitSwitchesInBatches(state.arpSw, s.opts.PollBatchSize)
-	for i, batch := range batches {
-		fmt.Printf("arp: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
-		res, err := runBatchWithTimeout(state.snmpCfg, batch, "arp", state.pollOpt, i, len(batches))
-		if err != nil {
-			return err
-		}
-		poll.PrintArpPollSummary(res)
-		if s.opts.DryRun {
-			continue
-		}
-		stats, err := state.persistSvc.PersistARP(res)
-		if err != nil {
-			return err
-		}
-		agg.Skipped = stats.Skipped
-		agg.RowsUpserted += stats.RowsUpserted
-		agg.MySQLAffectedRows += stats.MySQLAffectedRows
-		agg.SwitchesProcessed += stats.SwitchesProcessed
-		agg.PrepareErrors = append(agg.PrepareErrors, stats.PrepareErrors...)
-	}
-	if s.opts.DryRun {
+func printARPPersistSummary(agg persist.PersistARPStats, dryRun bool) error {
+	if dryRun {
 		fmt.Println("БД ARP: пропуск (--dry-run)")
 		return nil
 	}
@@ -280,32 +344,8 @@ func (s *Service) runARP(state *runtimeState) error {
 	return nil
 }
 
-func (s *Service) runMAC(state *runtimeState) error {
-	if !s.opts.CollectMAC {
-		return nil
-	}
-	agg := persist.PersistMACStats{PrepareErrors: []string{}}
-	batches := splitSwitchesInBatches(state.ifaceSw, s.opts.PollBatchSize)
-	for i, batch := range batches {
-		fmt.Printf("mac: batch %d/%d (size=%d)\n", i+1, len(batches), len(batch))
-		macOpt := s.buildMACPollOptions(state, batch)
-		res, err := runBatchWithTimeout(state.snmpCfg, batch, "mac", macOpt, i, len(batches))
-		if err != nil {
-			return err
-		}
-		poll.PrintMacPollSummary(res)
-		stats, err := state.persistSvc.PersistMAC(res, s.opts.DryRun)
-		if err != nil {
-			return err
-		}
-		agg.Skipped = stats.Skipped
-		agg.RowsUpserted += stats.RowsUpserted
-		agg.MySQLAffectedRows += stats.MySQLAffectedRows
-		agg.ObsoleteRowsAffected += stats.ObsoleteRowsAffected
-		agg.SwitchesProcessed += stats.SwitchesProcessed
-		agg.PrepareErrors = append(agg.PrepareErrors, stats.PrepareErrors...)
-	}
-	if s.opts.DryRun {
+func printMACPersistSummary(agg persist.PersistMACStats, dryRun bool) error {
+	if dryRun {
 		fmt.Println("БД MAC: dry-run (без записи) — тот же prepare, что при сохранении; предупреждения ниже при наличии")
 		if agg.Skipped {
 			fmt.Println("БД MAC: prepare пропущен (только чтение; для полного dry-run prepare нужна доступная на запись конфигурация компании)")

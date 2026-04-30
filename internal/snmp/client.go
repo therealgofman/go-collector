@@ -252,31 +252,33 @@ func ResolveModelID(id DeviceIdentity, rules []ModelRule) string {
 	}
 	oid := canonicalOID(id.SysObjectID)
 	for _, r := range rules {
-		if !r.Enabled {
-			continue
-		}
 		modelID := strings.TrimSpace(r.ID)
-		if modelID == "" {
+		if modelID == "" || !r.Enabled {
 			continue
 		}
-		matched := false
-		if x := strings.TrimSpace(r.MatchSysObjectID); x != "" {
-			matched = matched || canonicalOID(x) == oid
-		}
-		pat := strings.TrimSpace(r.MatchSysDescr)
-		if pat != "" {
-			prefix := regexFlagsPrefix(r)
-			// - ignorecase defaults to true
-			// - dotall defaults to true ('.' also matches newlines)
-			if re, err := regexp.Compile(prefix + pat); err == nil && re.MatchString(id.SysDescr) {
-				matched = true
-			}
-		}
-		if matched {
+		if ruleMatchesIdentity(r, id, oid) {
 			return modelID
 		}
 	}
 	return ""
+}
+
+func ruleMatchesIdentity(r ModelRule, id DeviceIdentity, canonicalSysObjectID string) bool {
+	if x := strings.TrimSpace(r.MatchSysObjectID); x != "" && canonicalOID(x) == canonicalSysObjectID {
+		return true
+	}
+	pat := strings.TrimSpace(r.MatchSysDescr)
+	if pat == "" {
+		return false
+	}
+	prefix := regexFlagsPrefix(r)
+	// - ignorecase defaults to true
+	// - dotall defaults to true ('.' also matches newlines)
+	re, err := regexp.Compile(prefix + pat)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(id.SysDescr)
 }
 
 func regexFlagsPrefix(r ModelRule) string {
