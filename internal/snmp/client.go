@@ -162,14 +162,18 @@ func (c *Client) walkWithConn(g *gosnmp.GoSNMP, baseOID string, useBulkWalk *boo
 		log.Printf("snmp oid timing ip=%s oid=%s getbulk_walk=%v duration=%s err=%v", c.IP, baseOID, doBulk, time.Since(start).Round(time.Millisecond), err)
 	}
 	if err != nil {
-		mode := "getnext_walk"
-		if doBulk {
-			mode = "getbulk_walk"
-		}
+		mode := walkModeName(doBulk)
 		// gosnmp отдаёт только «request timeout (after N retries)» — без OID; контекст добавляем здесь.
 		return nil, fmt.Errorf("snmp %s ip=%s oid=%s: %w", mode, c.IP, baseOID, err)
 	}
 	return out, nil
+}
+
+func walkModeName(doBulk bool) string {
+	if doBulk {
+		return "getbulk_walk"
+	}
+	return "getnext_walk"
 }
 
 // WalkMany последовательно обходит несколько OID на одном TCP/UDP-сокете (оптимизация против отдельного Connect на OID).
@@ -261,22 +265,7 @@ func ResolveModelID(id DeviceIdentity, rules []ModelRule) string {
 		}
 		pat := strings.TrimSpace(r.MatchSysDescr)
 		if pat != "" {
-			ignoreCase := true
-			if r.IgnoreCase != nil {
-				ignoreCase = *r.IgnoreCase
-			}
-			dotAll := true
-			if r.MatchSysDescrDotAll != nil {
-				dotAll = *r.MatchSysDescrDotAll
-			}
-			prefix := "(?"
-			if ignoreCase {
-				prefix += "i"
-			}
-			if dotAll {
-				prefix += "s"
-			}
-			prefix += ")"
+			prefix := regexFlagsPrefix(r)
 			// - ignorecase defaults to true
 			// - dotall defaults to true ('.' also matches newlines)
 			if re, err := regexp.Compile(prefix + pat); err == nil && re.MatchString(id.SysDescr) {
@@ -288,4 +277,24 @@ func ResolveModelID(id DeviceIdentity, rules []ModelRule) string {
 		}
 	}
 	return ""
+}
+
+func regexFlagsPrefix(r ModelRule) string {
+	ignoreCase := true
+	if r.IgnoreCase != nil {
+		ignoreCase = *r.IgnoreCase
+	}
+	dotAll := true
+	if r.MatchSysDescrDotAll != nil {
+		dotAll = *r.MatchSysDescrDotAll
+	}
+	prefix := "(?"
+	if ignoreCase {
+		prefix += "i"
+	}
+	if dotAll {
+		prefix += "s"
+	}
+	prefix += ")"
+	return prefix
 }

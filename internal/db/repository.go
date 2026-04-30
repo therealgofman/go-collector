@@ -281,6 +281,10 @@ func cleanSwitchField(s string) string {
 	return strings.TrimSpace(s)
 }
 
+func sanitizeDBString(s string) string {
+	return strings.TrimSpace(strings.ReplaceAll(s, "\x00", ""))
+}
+
 func (r *Repository) getSwitchRows(name string, switchID *int) ([]snmp.SwitchRow, error) {
 	// В шаблонах компаний могут быть дополнительные поля (например model_id):
 	// Unsafe позволяет StructScan читать нужные колонки и игнорировать остальные.
@@ -337,31 +341,43 @@ func (r *Repository) BuildMACDBContext(switchID int) (*snmp.MacDbContext, error)
 		IfIndexToUntaggedVLAN: map[int]int{},
 		IdxcomVLANWalks:       [][2]int{},
 	}
-	a, err := r.GetIfIndexToPortIDRows(switchID)
+	portRows, err := r.GetIfIndexToPortIDRows(switchID)
 	if err == nil {
-		for _, row := range a {
-			if row.IfIndex > 0 && row.PortID > 0 {
-				ctx.IfIndexToPortID[row.IfIndex] = row.PortID
-			}
-		}
+		fillIfIndexToPortID(ctx, portRows)
 	}
-	b, err := r.GetIfIndexToUntaggedVLANRows(switchID)
+	untaggedRows, err := r.GetIfIndexToUntaggedVLANRows(switchID)
 	if err == nil {
-		for _, row := range b {
-			if row.IfIndex > 0 && row.Number > 0 {
-				ctx.IfIndexToUntaggedVLAN[row.IfIndex] = row.Number
-			}
-		}
+		fillIfIndexToUntaggedVLAN(ctx, untaggedRows)
 	}
-	c, err := r.GetIdxcomVLANRows(switchID)
+	idxcomRows, err := r.GetIdxcomVLANRows(switchID)
 	if err == nil {
-		for _, row := range c {
-			if row.Number > 0 && row.VLANID > 0 {
-				ctx.IdxcomVLANWalks = append(ctx.IdxcomVLANWalks, [2]int{row.Number, row.VLANID})
-			}
-		}
+		fillIdxcomVLANWalks(ctx, idxcomRows)
 	}
 	return ctx, nil
+}
+
+func fillIfIndexToPortID(ctx *snmp.MacDbContext, rows []IfIndexPortRow) {
+	for _, row := range rows {
+		if row.IfIndex > 0 && row.PortID > 0 {
+			ctx.IfIndexToPortID[row.IfIndex] = row.PortID
+		}
+	}
+}
+
+func fillIfIndexToUntaggedVLAN(ctx *snmp.MacDbContext, rows []IfIndexVLANRow) {
+	for _, row := range rows {
+		if row.IfIndex > 0 && row.Number > 0 {
+			ctx.IfIndexToUntaggedVLAN[row.IfIndex] = row.Number
+		}
+	}
+}
+
+func fillIdxcomVLANWalks(ctx *snmp.MacDbContext, rows []IdxcomVLANRow) {
+	for _, row := range rows {
+		if row.Number > 0 && row.VLANID > 0 {
+			ctx.IdxcomVLANWalks = append(ctx.IdxcomVLANWalks, [2]int{row.Number, row.VLANID})
+		}
+	}
 }
 
 func (r *Repository) GetVLANRows() ([]VLANRow, error) {
@@ -392,7 +408,7 @@ func (r *Repository) GetVLANRows() ([]VLANRow, error) {
 		out = append(out, VLANRow{
 			VLANID:   vid,
 			Number:   int(row.Number.Int64),
-			DomainID: strings.TrimSpace(strings.ReplaceAll(row.DomainID.String, "\x00", "")),
+			DomainID: sanitizeDBString(row.DomainID.String),
 		})
 	}
 	return out, nil
@@ -417,7 +433,7 @@ func (r *Repository) GetVRFRows() ([]VRFRow, error) {
 		if !row.ID.Valid || row.ID.Int64 <= 0 {
 			continue
 		}
-		name := strings.TrimSpace(strings.ReplaceAll(row.Name.String, "\x00", ""))
+		name := sanitizeDBString(row.Name.String)
 		if name == "" {
 			continue
 		}
@@ -426,52 +442,42 @@ func (r *Repository) GetVRFRows() ([]VRFRow, error) {
 	return out, nil
 }
 
-func (r *Repository) GetPortIDByIfIndex(switchID, ifidx int) (int, bool, error) {
-	type portIDRow struct {
-		PortID  sql.NullInt64 `db:"port_id"`
-		DPortID sql.NullInt64 `db:"d_port_id"`
+type portIDLookupRow struct {
+	PortID  sql.NullInt64 `db:"port_id"`
+	DPortID sql.NullInt64 `db:"d_port_id"`
+}
+
+func extractPortID(row portIDLookupRow) (int, bool) {
+	id := nullIntToInt(row.PortID)
+	if id == 0 {
+		id = nullIntToInt(row.DPortID)
 	}
-	rows, err := r.store.query("get_port_by_ifindex", bindSwitchIfIndex{SwitchID: switchID, IfIndex: ifidx}, nil)
+	return id, id > 0
+}
+
+func (r *Repository) getPortIDByQuery(queryName string, bind any) (int, bool, error) {
+	rows, err := r.store.query(queryName, bind, nil)
 	if err != nil {
 		return 0, false, err
 	}
 	defer rows.Close()
-	if rows.Next() {
-		var row portIDRow
-		if err := rows.StructScan(&row); err != nil {
-			return 0, false, err
-		}
-		id := nullIntToInt(row.PortID)
-		if id == 0 {
-			id = nullIntToInt(row.DPortID)
-		}
-		return id, id > 0, nil
+	if !rows.Next() {
+		return 0, false, nil
 	}
-	return 0, false, nil
+	var row portIDLookupRow
+	if err := rows.StructScan(&row); err != nil {
+		return 0, false, err
+	}
+	id, ok := extractPortID(row)
+	return id, ok, nil
+}
+
+func (r *Repository) GetPortIDByIfIndex(switchID, ifidx int) (int, bool, error) {
+	return r.getPortIDByQuery("get_port_by_ifindex", bindSwitchIfIndex{SwitchID: switchID, IfIndex: ifidx})
 }
 
 func (r *Repository) GetPortIDByName(switchID int, name string) (int, bool, error) {
-	type portIDRow struct {
-		PortID  sql.NullInt64 `db:"port_id"`
-		DPortID sql.NullInt64 `db:"d_port_id"`
-	}
-	rows, err := r.store.query("get_port_by_name", bindSwitchName{SwitchID: switchID, Name: name}, nil)
-	if err != nil {
-		return 0, false, err
-	}
-	defer rows.Close()
-	if rows.Next() {
-		var row portIDRow
-		if err := rows.StructScan(&row); err != nil {
-			return 0, false, err
-		}
-		id := nullIntToInt(row.PortID)
-		if id == 0 {
-			id = nullIntToInt(row.DPortID)
-		}
-		return id, id > 0, nil
-	}
-	return 0, false, nil
+	return r.getPortIDByQuery("get_port_by_name", bindSwitchName{SwitchID: switchID, Name: name})
 }
 
 type IfIndexPortRow struct {
@@ -496,10 +502,7 @@ func (r *Repository) GetIfIndexToPortIDRows(switchID int) ([]IfIndexPortRow, err
 		if err := rows.StructScan(&row); err != nil {
 			return nil, err
 		}
-		pid := nullIntToInt(row.PortID)
-		if pid == 0 {
-			pid = nullIntToInt(row.DPortID)
-		}
+		pid, _ := extractPortID(portIDLookupRow{PortID: row.PortID, DPortID: row.DPortID})
 		out = append(out, IfIndexPortRow{
 			IfIndex: nullIntToInt(row.IfIndex),
 			PortID:  pid,

@@ -38,6 +38,49 @@ func sid(sw snmp.SwitchRow) string {
 	return "unknown"
 }
 
+type arpNoopDetector interface {
+	IsArpNoop() bool
+}
+
+func markPollFailure(out *snmp.PollResult, err error) {
+	out.Success = false
+	out.Error = err.Error()
+}
+
+func collectInterfacesForResult(out *snmp.PollResult, model snmp.Model) {
+	v, err := model.CollectInterfaces()
+	if err != nil {
+		markPollFailure(out, err)
+		return
+	}
+	out.Interfaces = v
+}
+
+func collectARPForResult(out *snmp.PollResult, model snmp.Model) {
+	v, err := model.CollectARP()
+	if err != nil {
+		markPollFailure(out, err)
+		return
+	}
+	out.ArpTable = v
+	if detector, ok := model.(arpNoopDetector); ok {
+		out.ArpSkipped = detector.IsArpNoop()
+	}
+}
+
+func collectMACForResult(out *snmp.PollResult, model snmp.Model, sw snmp.SwitchRow, opt Options) {
+	var ctx *snmp.MacDbContext
+	if sw.ID > 0 && opt.MacCtxBySID != nil {
+		ctx = opt.MacCtxBySID[sw.ID]
+	}
+	v, err := model.CollectMAC(ctx)
+	if err != nil {
+		markPollFailure(out, err)
+		return
+	}
+	out.MacTable = v
+}
+
 // runOne выполняет один полный цикл для свитча: CreateModel, затем CollectInterfaces / CollectARP / CollectMAC
 // в зависимости от kind; для MAC подставляет MacDbContext из opt.MacCtxBySID.
 func runOne(sw snmp.SwitchRow, kind string, opt Options) snmp.PollResult {
@@ -59,40 +102,11 @@ func runOne(sw snmp.SwitchRow, kind string, opt Options) snmp.PollResult {
 	}
 	switch kind {
 	case "interfaces":
-		v, err := model.CollectInterfaces()
-		if err != nil {
-			out.Success = false
-			out.Error = err.Error()
-		} else {
-			out.Interfaces = v
-		}
+		collectInterfacesForResult(&out, model)
 	case "arp":
-		v, err := model.CollectARP()
-		if err != nil {
-			out.Success = false
-			out.Error = err.Error()
-		} else {
-			out.ArpTable = v
-			type arpNoopDetector interface {
-				IsArpNoop() bool
-			}
-			if detector, ok := model.(arpNoopDetector); ok {
-				out.ArpSkipped = detector.IsArpNoop()
-			}
-		}
+		collectARPForResult(&out, model)
 	case "mac":
-		var ctx *snmp.MacDbContext
-		s := sw.ID
-		if s > 0 && opt.MacCtxBySID != nil {
-			ctx = opt.MacCtxBySID[s]
-		}
-		v, err := model.CollectMAC(ctx)
-		if err != nil {
-			out.Success = false
-			out.Error = err.Error()
-		} else {
-			out.MacTable = v
-		}
+		collectMACForResult(&out, model, sw, opt)
 	}
 	return out
 }
@@ -152,16 +166,52 @@ func startPerSwitchLogger(enabled bool, buffer int) (func(string), func()) {
 	}
 }
 
-// RunBatch обрабатывает все свитчи в пуле воркеров (Concurrency), печатает heartbeat по таймеру,
-// собирает срез PollResult в исходном порядке списка switches.
-// Поддерживает раннюю остановку по context.
-func RunBatch(ctx context.Context, switches []snmp.SwitchRow, kind string, opt Options) []snmp.PollResult {
+func normalizeOptions(opt Options) Options {
 	if opt.Concurrency <= 0 {
 		opt.Concurrency = 20
 	}
 	if opt.ProgressIntervalS <= 0 {
 		opt.ProgressIntervalS = 30
 	}
+	return opt
+}
+
+func initBatchResults(switches []snmp.SwitchRow) []snmp.PollResult {
+	res := make([]snmp.PollResult, len(switches))
+	for i, sw := range switches {
+		res[i] = snmp.PollResult{
+			SwitchID: sid(sw),
+			IP:       sw.IP,
+			Switch:   sw,
+			Success:  false,
+			Error:    "batch_not_processed",
+		}
+	}
+	return res
+}
+
+func logSwitchDoneSuffix(out snmp.PollResult) string {
+	if out.Error == "" {
+		return ""
+	}
+	return ", err=" + out.Error
+}
+
+func collectSuccessCount(results []snmp.PollResult) int {
+	ok := 0
+	for _, r := range results {
+		if r.Success {
+			ok++
+		}
+	}
+	return ok
+}
+
+// RunBatch обрабатывает все свитчи в пуле воркеров (Concurrency), печатает heartbeat по таймеру,
+// собирает срез PollResult в исходном порядке списка switches.
+// Поддерживает раннюю остановку по context.
+func RunBatch(ctx context.Context, switches []snmp.SwitchRow, kind string, opt Options) []snmp.PollResult {
+	opt = normalizeOptions(opt)
 	label := "SNMP " + kind
 	total := len(switches)
 	if total == 0 {
@@ -174,16 +224,7 @@ func RunBatch(ctx context.Context, switches []snmp.SwitchRow, kind string, opt O
 		opt.Concurrency,
 		opt.ProgressIntervalS,
 	)
-	res := make([]snmp.PollResult, len(switches))
-	for i, sw := range switches {
-		res[i] = snmp.PollResult{
-			SwitchID: sid(sw),
-			IP:       sw.IP,
-			Switch:   sw,
-			Success:  false,
-			Error:    "batch_not_processed",
-		}
-	}
+	res := initBatchResults(switches)
 	var wg sync.WaitGroup
 	var collectWG sync.WaitGroup
 	start := time.Now()
@@ -244,12 +285,7 @@ func RunBatch(ctx context.Context, switches []snmp.SwitchRow, kind string, opt O
 					ip,
 					st,
 					time.Since(swStart).Seconds(),
-					func() string {
-						if out.Error == "" {
-							return ""
-						}
-						return ", err=" + out.Error
-					}(),
+					logSwitchDoneSuffix(out),
 				))
 				select {
 				case <-ctx.Done():
@@ -274,12 +310,7 @@ produceLoop:
 	wg.Wait()
 	close(results)
 	collectWG.Wait()
-	ok := 0
-	for _, r := range res {
-		if r.Success {
-			ok++
-		}
-	}
+	ok := collectSuccessCount(res)
 	fmt.Printf(
 		"%s: poll done in %.1fs - success %d/%d, failures %d.\n",
 		label,
