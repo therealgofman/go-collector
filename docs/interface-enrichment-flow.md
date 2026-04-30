@@ -158,11 +158,11 @@ ports["10101"] = snmp.InterfacePort{
   trunk: 0,
   description: "",
   disabled: 0,
-  enabled: 1,
-  max_mac: 32,
-  current_mac: 7,
+  enabled: "1",
+  max_mac: "32",
+  current_mac: "7",
   violation: "restrict",
-  last_updated: 1745686200
+  last_updated: "1745686200"
 }
 ```
 

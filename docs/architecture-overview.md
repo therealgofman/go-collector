@@ -7,6 +7,11 @@
 - `internal/snmp` — получение и нормализация данных с устройств (vendor-specific collectors).
 - `internal/snmp/models` — выбор модели устройства и сборка pipeline (factory + hooks).
 - `internal/collector` — orchestration запуска (`Run`): загрузка конфигов, батчинг, вызовы poll/persist.
+- `internal/config` — загрузка `app.yaml`/`companies/*.yaml`, нормализация настроек и рендер SQL-шаблонов:
+  - `loader.go` — чтение конфигов,
+  - `types.go` — типы app/company,
+  - `app.go`, `company.go` — бизнес-методы конфигов,
+  - `query_builder.go` — рендер named-query через pongo2.
 - `internal/db`:
   - `connection.go` — инфраструктура подключения и ping БД,
   - `repository.go` — типизированный слой запросов,

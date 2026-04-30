@@ -39,6 +39,8 @@
 
 Рендер выполняется через `internal/config.QueryBuilder` с `pongo2`.
 
+Сам пакет `internal/config` разделён по ролям (`types.go`, `loader.go`, `app.go`, `company.go`, `query_builder.go`), но внешне это единый API для остальных слоёв.
+
 Контекст шаблона включает:
 
 - `company` — раздел `company` из `companies/*.yaml`;
