@@ -126,7 +126,7 @@ queries:
 
 ## 10) Батчевый режим для больших инвентарей
 
-В `main` поддерживается флаг `-poll-batch-size` (по умолчанию `1000`):
+Флаг `-poll-batch-size` (по умолчанию `1000`) обрабатывается в `main`, после чего orchestration выполняется в `internal/collector.Service.Run`:
 
 - свитчи режутся на батчи;
 - SNMP poll + persist выполняются по батчу;

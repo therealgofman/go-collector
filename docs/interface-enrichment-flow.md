@@ -36,12 +36,12 @@ ports["10101"] = snmp.InterfacePort{
 ```go
 p.Persist = append(p.Persist, snmp.PortPersistOp{
 	Query: "upsert_port_security",
-	Params: map[string]any{
-		"enabled":      1,
-		"max_mac":      32,
-		"current_mac":  7,
+	Params: map[string]string{
+		"enabled":      "1",
+		"max_mac":      "32",
+		"current_mac":  "7",
 		"violation":    "restrict",
-		"last_updated": 1745686200,
+		"last_updated": "1745686200",
 	},
 })
 ```
@@ -135,12 +135,12 @@ ports["10101"] = snmp.InterfacePort{
 	Persist: []snmp.PortPersistOp{
 		{
 			Query: "upsert_port_security",
-			Params: map[string]any{
-				"enabled":      1,
-				"max_mac":      32,
-				"current_mac":  7,
+			Params: map[string]string{
+				"enabled":      "1",
+				"max_mac":      "32",
+				"current_mac":  "7",
 				"violation":    "restrict",
-				"last_updated": 1745686200,
+				"last_updated": "1745686200",
 			},
 		},
 	},
@@ -183,9 +183,9 @@ Cisco enricher регистрирует persist-операцию:
 ```go
 p.Persist = append(p.Persist, snmp.PortPersistOp{
 	Query: "upsert_port_security",
-	Params: map[string]any{
-		"psec_status":    1,
-		"psec_mac_limit": 32,
+	Params: map[string]string{
+		"psec_status":    "1",
+		"psec_mac_limit": "32",
 	},
 })
 ```
