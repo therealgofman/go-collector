@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	var collectInterfaces, collectARP, collectMAC, debugSNMP, dryRun bool
+	var collectInterfaces, collectARP, collectMAC, noDisplay, debugSNMP, dryRun bool
 	var configDir, companyCode string
 	var switchID int
 	var snmpOIDTiming bool
@@ -19,6 +19,7 @@ func main() {
 	flag.BoolVar(&collectInterfaces, "collect-interfaces", false, "собирать интерфейсы")
 	flag.BoolVar(&collectARP, "collect-arp", false, "собирать ARP")
 	flag.BoolVar(&collectMAC, "collect-mac", false, "собирать MAC/FDB")
+	flag.BoolVar(&noDisplay, "no-display", false, "отключить display-слой (без печати подробных результатов poll)")
 	flag.BoolVar(&debugSNMP, "debug-snmp", false, "отладочный вывод SNMP")
 	flag.BoolVar(&snmpOIDTiming, "snmp-oid-timing", false, "логировать время обхода по каждому OID SNMP")
 	flag.BoolVar(&dryRun, "dry-run", false, "не писать в БД")
@@ -35,6 +36,7 @@ func main() {
 		CollectInterfaces: collectInterfaces,
 		CollectARP:        collectARP,
 		CollectMAC:        collectMAC,
+		NoDisplay:         noDisplay,
 		DebugSNMP:         debugSNMP,
 		DryRun:            dryRun,
 		SwitchID:          switchID,

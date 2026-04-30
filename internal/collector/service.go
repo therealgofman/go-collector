@@ -19,6 +19,7 @@ type RunOptions struct {
 	CollectInterfaces bool
 	CollectARP        bool
 	CollectMAC        bool
+	NoDisplay         bool
 	DebugSNMP         bool
 	DryRun            bool
 	SwitchID          int
@@ -196,7 +197,7 @@ func (s *Service) runInterfaces(state *runtimeState) error {
 		if err != nil {
 			return err
 		}
-		okInc, totalInc := printInterfacesBatchResults(res)
+		okInc, totalInc := printInterfacesBatchResults(res, !s.opts.NoDisplay)
 		okTotal += okInc
 		total += totalInc
 		if s.opts.DryRun {
@@ -226,7 +227,9 @@ func (s *Service) runARP(state *runtimeState) error {
 		if err != nil {
 			return err
 		}
-		poll.PrintArpPollSummary(res)
+		if !s.opts.NoDisplay {
+			poll.PrintArpPollSummary(res)
+		}
 		if s.opts.DryRun {
 			continue
 		}
@@ -255,7 +258,9 @@ func (s *Service) runMAC(state *runtimeState) error {
 		if err != nil {
 			return err
 		}
-		poll.PrintMacPollSummary(res)
+		if !s.opts.NoDisplay {
+			poll.PrintMacPollSummary(res)
+		}
 		stats, err := state.persistSvc.PersistMAC(res, s.opts.DryRun)
 		if err != nil {
 			return err
@@ -265,13 +270,13 @@ func (s *Service) runMAC(state *runtimeState) error {
 	return printMACPersistSummary(agg, s.opts.DryRun)
 }
 
-func printInterfacesBatchResults(res []snmp.PollResult) (int, int) {
+func printInterfacesBatchResults(res []snmp.PollResult, displayEnabled bool) (int, int) {
 	okCount := 0
 	for _, r := range res {
 		if r.Success {
 			okCount++
 		}
-		if r.Success && r.Interfaces != nil {
+		if displayEnabled && r.Success && r.Interfaces != nil {
 			poll.PrintSwitchInterfaces(r.Interfaces, fmt.Sprint(r.SwitchID), r.IP)
 		}
 	}
